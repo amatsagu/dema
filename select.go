@@ -3,8 +3,7 @@ package dema
 import (
 	"context"
 	"reflect"
-	"strconv"
-	"strings"
+	"unsafe"
 
 	"github.com/amatsagu/lumo"
 	"zombiezen.com/go/sqlite"
@@ -17,28 +16,46 @@ type orderClause struct {
 }
 
 type SelectBuilder[T any] struct {
-	db     *DB
-	conn   *sqlite.Conn
-	cond   Condition
-	orders []orderClause
-	limit  int
-	offset int
-	hasLim bool
-	hasOff bool
+	cond       Condition
+	table      *tableInfo
+	db         *DB
+	conn       *sqlite.Conn
+	ordersBuf  [2]orderClause
+	orders     []orderClause
+	limit      int
+	offset     int
+	hasLim     bool
+	hasOff     bool
+	isPtrModel bool
 }
 
-func (db *DB) Select[T any]() *SelectBuilder[T] {
-	return &SelectBuilder[T]{
-		db: db,
+func (db *DB) Select[T any]() SelectBuilder[T] {
+	var zero T
+	typ := reflect.TypeOf(zero)
+	isPtr := typ != nil && typ.Kind() == reflect.Pointer
+	if isPtr {
+		typ = typ.Elem()
+	}
+	var table *tableInfo
+	if typ != nil {
+		table, _ = db.getTableInfo(typ)
+	}
+	return SelectBuilder[T]{
+		db:         db,
+		table:      table,
+		isPtrModel: isPtr,
 	}
 }
 
-func (b *SelectBuilder[T]) Where(cond Condition) *SelectBuilder[T] {
+func (b SelectBuilder[T]) Where(cond Condition) SelectBuilder[T] {
 	b.cond = cond
 	return b
 }
 
-func (b *SelectBuilder[T]) OrderBy[V any](field Field[T, V], dir OrderDirection) *SelectBuilder[T] {
+func (b SelectBuilder[T]) OrderBy[V any](field Field[T, V], dir OrderDirection) SelectBuilder[T] {
+	if b.orders == nil {
+		b.orders = b.ordersBuf[:0]
+	}
 	b.orders = append(b.orders, orderClause{
 		col: field.Name,
 		dir: dir,
@@ -46,7 +63,7 @@ func (b *SelectBuilder[T]) OrderBy[V any](field Field[T, V], dir OrderDirection)
 	return b
 }
 
-func (b *SelectBuilder[T]) Limit(amount int) *SelectBuilder[T] {
+func (b SelectBuilder[T]) Limit(amount int) SelectBuilder[T] {
 	if amount < 0 {
 		amount = 0
 	}
@@ -56,7 +73,7 @@ func (b *SelectBuilder[T]) Limit(amount int) *SelectBuilder[T] {
 }
 
 // Page applies 1-indexed pagination (current page, page size).
-func (b *SelectBuilder[T]) Page(current, size int) *SelectBuilder[T] {
+func (b SelectBuilder[T]) Page(current, size int) SelectBuilder[T] {
 	if current < 1 {
 		current = 1
 	}
@@ -70,47 +87,48 @@ func (b *SelectBuilder[T]) Page(current, size int) *SelectBuilder[T] {
 	return b
 }
 
-func (b *SelectBuilder[T]) buildSQL(table *tableInfo) (string, []any) {
+func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) string {
 	if b.cond == nil && len(b.orders) == 0 && !b.hasLim && !b.hasOff {
-		return table.defaultSelectSQL, nil
+		return table.defaultSelectSQL
 	}
 
-	var sb strings.Builder
-	sb.Grow(len(table.defaultSelectSQL) + 64)
-	sb.WriteString(table.defaultSelectSQL)
+	qb := getQueryBuffer()
+	defer putQueryBuffer(qb)
 
-	var args []any
+	qb.WriteString(table.defaultSelectSQL)
+
 	if b.cond != nil {
-		sb.WriteString(" WHERE ")
-		b.cond.toSQL(&sb, &args)
+		qb.WriteString(" WHERE ")
+		b.cond.writeSQL(qb)
+		opts.Args = b.cond.appendArgs(opts.Args)
 	}
 
 	if len(b.orders) > 0 {
-		sb.WriteString(" ORDER BY ")
+		qb.WriteString(" ORDER BY ")
 		for i, ord := range b.orders {
 			if i > 0 {
-				sb.WriteString(", ")
+				qb.WriteString(", ")
 			}
-			sb.WriteString(`"`)
-			sb.WriteString(ord.col)
-			sb.WriteString(`" `)
-			sb.WriteString(string(ord.dir))
+			qb.WriteString(`"`)
+			qb.WriteString(ord.col)
+			qb.WriteString(`" `)
+			qb.WriteString(string(ord.dir))
 		}
 	}
 
 	if b.hasLim {
-		sb.WriteString(" LIMIT ")
-		sb.WriteString(strconv.Itoa(b.limit))
+		qb.WriteString(" LIMIT ")
+		qb.WriteInt(b.limit)
 	}
 	if b.hasOff {
-		sb.WriteString(" OFFSET ")
-		sb.WriteString(strconv.Itoa(b.offset))
+		qb.WriteString(" OFFSET ")
+		qb.WriteInt(b.offset)
 	}
 
-	return sb.String(), args
+	return table.getSelectSQL(qb)
 }
 
-func (b *SelectBuilder[T]) Run(args ...any) ([]T, error) {
+func (b SelectBuilder[T]) Run(args ...any) ([]T, error) {
 	ctx := context.Background()
 	cache := true
 
@@ -125,18 +143,27 @@ func (b *SelectBuilder[T]) Run(args ...any) ([]T, error) {
 		}
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
+	table := b.table
+	isPtrModel := b.isPtrModel
+	if table == nil {
+		var zero T
+		typ := reflect.TypeOf(zero)
+		isPtrModel = typ != nil && typ.Kind() == reflect.Pointer
+		if isPtrModel {
+			typ = typ.Elem()
+		}
+		var err error
+		table, err = b.db.getTableInfo(typ)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	table, err := b.db.getTableInfo(typ)
-	if err != nil {
-		return nil, err
-	}
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
 
-	querySQL, args := b.buildSQL(table)
+	querySQL := b.buildSQL(table, opts)
 
 	conn, err := b.db.pool.Take(ctx)
 	if err != nil {
@@ -153,24 +180,35 @@ func (b *SelectBuilder[T]) Run(args ...any) ([]T, error) {
 	}
 	results := make([]T, 0, capHint)
 
-	opts := &sqlitex.ExecOptions{
-		Args: args,
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			var row T
-			val := reflect.ValueOf(&row).Elem()
-			scanTarget := val
-			if scanTarget.Kind() == reflect.Pointer {
-				if scanTarget.IsNil() {
-					scanTarget.Set(reflect.New(scanTarget.Type().Elem()))
-				}
-				scanTarget = scanTarget.Elem()
-			}
-			if err := table.scanRowDirect(stmt, scanTarget); err != nil {
+	if isPtrModel {
+		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+			elem := reflect.New(table.typ)
+			if err := table.scanRowDirectPtr(stmt, elem.UnsafePointer()); err != nil {
 				return err
 			}
-			results = append(results, row)
+			results = append(results, elem.Interface().(T))
 			return nil
-		},
+		}
+	} else {
+		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+			idx := len(results)
+			if idx == cap(results) {
+				newCap := cap(results) * 2
+				if newCap == 0 {
+					newCap = 4
+				}
+				newRes := make([]T, len(results), newCap)
+				copy(newRes, results)
+				results = newRes
+			}
+			results = results[:idx+1]
+			rowPtr := unsafe.Pointer(&results[idx])
+			if err := table.scanRowDirectPtr(stmt, rowPtr); err != nil {
+				results = results[:idx]
+				return err
+			}
+			return nil
+		}
 	}
 
 	if cache {

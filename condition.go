@@ -7,6 +7,8 @@ import (
 type Condition interface {
 	isCondition()
 	toSQL(b *strings.Builder, args *[]any)
+	writeSQL(qb *queryBuffer)
+	appendArgs(args []any) []any
 }
 
 func encodeValue(v any) any {
@@ -34,9 +36,18 @@ type equalCond struct {
 
 func (c equalCond) isCondition() { _ = c.col }
 func (c equalCond) toSQL(b *strings.Builder, args *[]any) {
-	b.WriteString(c.col)
-	b.WriteString(" = ?")
-	*args = append(*args, encodeValue(c.val))
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c equalCond) writeSQL(qb *queryBuffer) {
+	qb.WriteString(c.col)
+	qb.WriteString(" = ?")
+}
+func (c equalCond) appendArgs(args []any) []any {
+	return append(args, encodeValue(c.val))
 }
 
 func Equal[T any, V any](field Field[T, V], val V) Condition {
@@ -50,9 +61,18 @@ type greaterCond struct {
 
 func (c greaterCond) isCondition() { _ = c.col }
 func (c greaterCond) toSQL(b *strings.Builder, args *[]any) {
-	b.WriteString(c.col)
-	b.WriteString(" > ?")
-	*args = append(*args, encodeValue(c.val))
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c greaterCond) writeSQL(qb *queryBuffer) {
+	qb.WriteString(c.col)
+	qb.WriteString(" > ?")
+}
+func (c greaterCond) appendArgs(args []any) []any {
+	return append(args, encodeValue(c.val))
 }
 
 func Greater[T any, V any](field Field[T, V], val V) Condition {
@@ -66,9 +86,18 @@ type lesserCond struct {
 
 func (c lesserCond) isCondition() { _ = c.col }
 func (c lesserCond) toSQL(b *strings.Builder, args *[]any) {
-	b.WriteString(c.col)
-	b.WriteString(" < ?")
-	*args = append(*args, encodeValue(c.val))
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c lesserCond) writeSQL(qb *queryBuffer) {
+	qb.WriteString(c.col)
+	qb.WriteString(" < ?")
+}
+func (c lesserCond) appendArgs(args []any) []any {
+	return append(args, encodeValue(c.val))
 }
 
 func Lesser[T any, V any](field Field[T, V], val V) Condition {
@@ -82,20 +111,32 @@ type withinCond struct {
 
 func (c withinCond) isCondition() { _ = c.col }
 func (c withinCond) toSQL(b *strings.Builder, args *[]any) {
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c withinCond) writeSQL(qb *queryBuffer) {
 	if len(c.vals) == 0 {
-		b.WriteString("0 = 1")
+		qb.WriteString("0 = 1")
 		return
 	}
-	b.WriteString(c.col)
-	b.WriteString(" IN (")
-	for i, v := range c.vals {
+	qb.WriteString(c.col)
+	qb.WriteString(" IN (")
+	for i := range c.vals {
 		if i > 0 {
-			b.WriteString(", ")
+			qb.WriteString(", ")
 		}
-		b.WriteString("?")
-		*args = append(*args, encodeValue(v))
+		qb.WriteString("?")
 	}
-	b.WriteString(")")
+	qb.WriteString(")")
+}
+func (c withinCond) appendArgs(args []any) []any {
+	for _, v := range c.vals {
+		args = append(args, encodeValue(v))
+	}
+	return args
 }
 
 func Within[T any, V any](field Field[T, V], values ...V) Condition {
@@ -113,20 +154,32 @@ type notWithinCond struct {
 
 func (c notWithinCond) isCondition() { _ = c.col }
 func (c notWithinCond) toSQL(b *strings.Builder, args *[]any) {
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c notWithinCond) writeSQL(qb *queryBuffer) {
 	if len(c.vals) == 0 {
-		b.WriteString("1 = 1")
+		qb.WriteString("1 = 1")
 		return
 	}
-	b.WriteString(c.col)
-	b.WriteString(" NOT IN (")
-	for i, v := range c.vals {
+	qb.WriteString(c.col)
+	qb.WriteString(" NOT IN (")
+	for i := range c.vals {
 		if i > 0 {
-			b.WriteString(", ")
+			qb.WriteString(", ")
 		}
-		b.WriteString("?")
-		*args = append(*args, encodeValue(v))
+		qb.WriteString("?")
 	}
-	b.WriteString(")")
+	qb.WriteString(")")
+}
+func (c notWithinCond) appendArgs(args []any) []any {
+	for _, v := range c.vals {
+		args = append(args, encodeValue(v))
+	}
+	return args
 }
 
 func NotWithin[T any, V any](field Field[T, V], values ...V) Condition {
@@ -145,9 +198,18 @@ type rangeCond struct {
 
 func (c rangeCond) isCondition() { _ = c.col }
 func (c rangeCond) toSQL(b *strings.Builder, args *[]any) {
-	b.WriteString(c.col)
-	b.WriteString(" BETWEEN ? AND ?")
-	*args = append(*args, encodeValue(c.min), encodeValue(c.max))
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c rangeCond) writeSQL(qb *queryBuffer) {
+	qb.WriteString(c.col)
+	qb.WriteString(" BETWEEN ? AND ?")
+}
+func (c rangeCond) appendArgs(args []any) []any {
+	return append(args, encodeValue(c.min), encodeValue(c.max))
 }
 
 func Range[T any, V any](field Field[T, V], min, max V) Condition {
@@ -162,9 +224,18 @@ type outsideRangeCond struct {
 
 func (c outsideRangeCond) isCondition() { _ = c.col }
 func (c outsideRangeCond) toSQL(b *strings.Builder, args *[]any) {
-	b.WriteString(c.col)
-	b.WriteString(" NOT BETWEEN ? AND ?")
-	*args = append(*args, encodeValue(c.min), encodeValue(c.max))
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c outsideRangeCond) writeSQL(qb *queryBuffer) {
+	qb.WriteString(c.col)
+	qb.WriteString(" NOT BETWEEN ? AND ?")
+}
+func (c outsideRangeCond) appendArgs(args []any) []any {
+	return append(args, encodeValue(c.min), encodeValue(c.max))
 }
 
 func OutsideRange[T any, V any](field Field[T, V], min, max V) Condition {
@@ -179,24 +250,40 @@ type binaryCond struct {
 
 func (c binaryCond) isCondition() { _ = c.op }
 func (c binaryCond) toSQL(b *strings.Builder, args *[]any) {
+	qb := getQueryBuffer()
+	c.writeSQL(qb)
+	b.Write(qb.Bytes())
+	putQueryBuffer(qb)
+	*args = c.appendArgs(*args)
+}
+func (c binaryCond) writeSQL(qb *queryBuffer) {
 	if c.a == nil && c.b == nil {
 		return
 	}
 	if c.a == nil {
-		c.b.toSQL(b, args)
+		c.b.writeSQL(qb)
 		return
 	}
 	if c.b == nil {
-		c.a.toSQL(b, args)
+		c.a.writeSQL(qb)
 		return
 	}
-	b.WriteString("(")
-	c.a.toSQL(b, args)
-	b.WriteString(") ")
-	b.WriteString(c.op)
-	b.WriteString(" (")
-	c.b.toSQL(b, args)
-	b.WriteString(")")
+	qb.WriteString("(")
+	c.a.writeSQL(qb)
+	qb.WriteString(") ")
+	qb.WriteString(c.op)
+	qb.WriteString(" (")
+	c.b.writeSQL(qb)
+	qb.WriteString(")")
+}
+func (c binaryCond) appendArgs(args []any) []any {
+	if c.a != nil {
+		args = c.a.appendArgs(args)
+	}
+	if c.b != nil {
+		args = c.b.appendArgs(args)
+	}
+	return args
 }
 
 func Or(a, b Condition) Condition {

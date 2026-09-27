@@ -3,7 +3,7 @@ package dema
 import (
 	"context"
 	"reflect"
-	"strings"
+	"unsafe"
 
 	"github.com/amatsagu/lumo"
 	"zombiezen.com/go/sqlite"
@@ -16,16 +16,32 @@ type setClause struct {
 }
 
 type UpdateBuilder[T any] struct {
-	cond   Condition
-	row    T
-	db     *DB
-	sets   []setClause
-	hasRow bool
+	cond    Condition
+	row     T
+	db      *DB
+	table   *tableInfo
+	set0    setClause
+	set1    setClause
+	set2    setClause
+	set3    setClause
+	extra   []setClause
+	numSets uint8
+	hasRow  bool
 }
 
-func (db *DB) Update[T any](rows ...T) *UpdateBuilder[T] {
-	b := &UpdateBuilder[T]{
-		db: db,
+func (db *DB) Update[T any](rows ...T) UpdateBuilder[T] {
+	var zero T
+	typ := reflect.TypeOf(zero)
+	if typ != nil && typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	var table *tableInfo
+	if typ != nil {
+		table, _ = db.getTableInfo(typ)
+	}
+	b := UpdateBuilder[T]{
+		db:    db,
+		table: table,
 	}
 	if len(rows) > 0 {
 		b.hasRow = true
@@ -34,26 +50,36 @@ func (db *DB) Update[T any](rows ...T) *UpdateBuilder[T] {
 	return b
 }
 
-func (b *UpdateBuilder[T]) Set[V any](field Field[T, V], val V) *UpdateBuilder[T] {
-	b.sets = append(b.sets, setClause{
-		col: field.Name,
-		val: val,
-	})
+func (b UpdateBuilder[T]) Set[V any](field Field[T, V], val V) UpdateBuilder[T] {
+	s := setClause{col: field.Name, val: val}
+	switch b.numSets {
+	case 0:
+		b.set0 = s
+	case 1:
+		b.set1 = s
+	case 2:
+		b.set2 = s
+	case 3:
+		b.set3 = s
+	default:
+		b.extra = append(b.extra, s)
+	}
+	b.numSets++
 	return b
 }
 
-func (b *UpdateBuilder[T]) Where(cond Condition) *UpdateBuilder[T] {
+func (b UpdateBuilder[T]) Where(cond Condition) UpdateBuilder[T] {
 	b.cond = cond
 	return b
 }
 
-func (b *UpdateBuilder[T]) Row(row T) *UpdateBuilder[T] {
+func (b UpdateBuilder[T]) Row(row T) UpdateBuilder[T] {
 	b.hasRow = true
 	b.row = row
 	return b
 }
 
-func (b *UpdateBuilder[T]) Run(args ...any) error {
+func (b UpdateBuilder[T]) Run(args ...any) error {
 	ctx := context.Background()
 	cache := true
 
@@ -68,15 +94,18 @@ func (b *UpdateBuilder[T]) Run(args ...any) error {
 		}
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
-	table, err := b.db.getTableInfo(typ)
-	if err != nil {
-		return err
+	table := b.table
+	if table == nil {
+		var zero T
+		typ := reflect.TypeOf(zero)
+		if typ != nil && typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		var err error
+		table, err = b.db.getTableInfo(typ)
+		if err != nil {
+			return err
+		}
 	}
 
 	conn, err := b.db.pool.Take(ctx)
@@ -91,27 +120,30 @@ func (b *UpdateBuilder[T]) Run(args ...any) error {
 	return b.executeWithConn(conn, table, cache)
 }
 
-func (b *UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, cache bool) error {
+func (b UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, cache bool) error {
 	if b.hasRow {
 		if table.onUpdate != nil {
-			if err := table.onUpdate(&b.row); err != nil {
+			rowCopy := b.row
+			if err := table.onUpdate(&rowCopy); err != nil {
 				return lumo.WrapError(err).
 					Include("dema_table", table.name).
 					Include("dema_operation", "UPDATE").
 					Include("dema_expected", "onUpdate hook validation")
 			}
+			b.row = rowCopy
 		}
 		return executeUpdateRow(conn, table, b.row, cache)
 	}
 
-	if len(b.sets) == 0 {
+	if b.numSets == 0 {
 		return lumo.WrapString("no fields specified for update (call Set or pass row)").
 			Include("dema_table", table.name).
 			Include("dema_operation", "UPDATE").
 			Include("dema_expected", "at least one field to update")
 	}
+
 	if b.cond == nil {
-		return lumo.WrapString("WHERE condition required for update").
+		return lumo.WrapString("update requires a WHERE condition to prevent accidental full-table updates").
 			Include("dema_table", table.name).
 			Include("dema_operation", "UPDATE").
 			Include("dema_expected", "explicit WHERE condition")
@@ -126,32 +158,53 @@ func (b *UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, 
 		}
 	}
 
-	var sb strings.Builder
-	var args []any
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
 
-	sb.WriteString(`UPDATE "`)
-	sb.WriteString(table.name)
-	sb.WriteString(`" SET `)
-	for i, s := range b.sets {
+	qb := getQueryBuffer()
+	defer putQueryBuffer(qb)
+
+	qb.WriteString(`UPDATE "`)
+	qb.WriteString(table.name)
+	qb.WriteString(`" SET `)
+	for i := uint8(0); i < b.numSets; i++ {
 		if i > 0 {
-			sb.WriteString(", ")
+			qb.WriteString(", ")
 		}
-		sb.WriteString(`"`)
-		sb.WriteString(s.col)
-		sb.WriteString(`" = ?`)
-		args = append(args, encodeValue(s.val))
+		var col string
+		var val any
+		switch i {
+		case 0:
+			col, val = b.set0.col, b.set0.val
+		case 1:
+			col, val = b.set1.col, b.set1.val
+		case 2:
+			col, val = b.set2.col, b.set2.val
+		case 3:
+			col, val = b.set3.col, b.set3.val
+		default:
+			s := b.extra[i-4]
+			col, val = s.col, s.val
+		}
+		qb.WriteString(`"`)
+		qb.WriteString(col)
+		qb.WriteString(`" = ?`)
+		opts.Args = append(opts.Args, encodeValue(val))
 	}
 
-	sb.WriteString(" WHERE ")
-	b.cond.toSQL(&sb, &args)
-	sb.WriteString(";")
+	qb.WriteString(" WHERE ")
+	b.cond.writeSQL(qb)
+	opts.Args = b.cond.appendArgs(opts.Args)
+	qb.WriteString(";")
 
-	opts := &sqlitex.ExecOptions{Args: args}
+	querySQL := table.getUpdateSQL(qb)
+
 	var err error
 	if cache {
-		err = sqlitex.Execute(conn, sb.String(), opts)
+		err = sqlitex.Execute(conn, querySQL, opts)
 	} else {
-		err = sqlitex.ExecuteTransient(conn, sb.String(), opts)
+		err = sqlitex.ExecuteTransient(conn, querySQL, opts)
 	}
 
 	if err != nil {
@@ -164,30 +217,86 @@ func (b *UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, 
 }
 
 func (db *DB) UpdateRow(args ...any) error {
-	ctx := context.Background()
-	var rowVal reflect.Value
-	var found bool
+	if len(args) == 0 {
+		return lumo.WrapString("no struct row provided to UpdateRow").
+			Include("dema_table", "").
+			Include("dema_operation", "UPDATE").
+			Include("dema_expected", "model struct instance")
+	}
 
-	for _, arg := range args {
-		if c, ok := arg.(context.Context); ok && c != nil {
-			ctx = c
-		} else if arg != nil {
-			v := reflect.ValueOf(arg)
-			if v.Kind() == reflect.Pointer {
-				v = v.Elem()
+	ctx := context.Background()
+	var row any
+	if len(args) == 1 {
+		row = args[0]
+	} else if len(args) == 2 {
+		if c, ok := args[0].(context.Context); ok {
+			if c != nil {
+				ctx = c
 			}
-			if v.Kind() == reflect.Struct {
-				rowVal = v
-				found = true
-			}
+			row = args[1]
 		}
 	}
 
-	if !found {
-		return lumo.WrapString("no struct row provided for update").
+	if row != nil {
+		if p, typ, ok := extractSingleRow(row); ok {
+			table, err := db.getTableInfo(typ)
+			if err != nil {
+				return err
+			}
+			if len(table.pkCols) == 0 {
+				return lumo.WrapString("update requires model with primary key field marked with 'pk' tag").
+					Include("dema_table", table.name).
+					Include("dema_operation", "UPDATE").
+					Include("dema_expected", "primary key definition")
+			}
+			if table.onUpdate != nil {
+				rowPtr := reflect.New(table.typ)
+				copy(unsafe.Slice((*byte)(rowPtr.UnsafePointer()), table.typ.Size()), unsafe.Slice((*byte)(p), table.typ.Size()))
+				if err := table.onUpdate(rowPtr.Interface()); err != nil {
+					return lumo.WrapError(err).
+						Include("dema_table", table.name).
+						Include("dema_operation", "UPDATE").
+						Include("dema_expected", "onUpdate hook validation")
+				}
+				p = rowPtr.UnsafePointer()
+			}
+			conn, err := db.pool.Take(ctx)
+			if err != nil {
+				return lumo.WrapError(err).
+					Include("dema_table", table.name).
+					Include("dema_operation", "UPDATE").
+					Include("dema_expected", "connection from pool")
+			}
+			defer db.pool.Put(conn)
+			return executeUpdateRowSingle(conn, table, p, true)
+		}
+	}
+
+	var rowVal reflect.Value
+	var foundRow bool
+	for _, arg := range args {
+		if arg == nil {
+			continue
+		}
+		if c, ok := arg.(context.Context); ok && c != nil {
+			ctx = c
+			continue
+		}
+		v := reflect.ValueOf(arg)
+		if v.Kind() == reflect.Pointer {
+			v = v.Elem()
+		}
+		if v.Kind() == reflect.Struct {
+			rowVal = v
+			foundRow = true
+		}
+	}
+
+	if !foundRow {
+		return lumo.WrapString("no struct row provided to UpdateRow").
 			Include("dema_table", "").
 			Include("dema_operation", "UPDATE").
-			Include("dema_expected", "model struct")
+			Include("dema_expected", "model struct instance")
 	}
 
 	typ := rowVal.Type()
@@ -221,8 +330,7 @@ func (db *DB) UpdateRow(args ...any) error {
 }
 
 func executeUpdateRow[T any](conn *sqlite.Conn, table *tableInfo, row T, cache bool) error {
-	rowVal := reflect.ValueOf(&row).Elem()
-	return executeUpdateRowVal(conn, table, rowVal, cache)
+	return executeUpdateRowSingle(conn, table, unsafe.Pointer(&row), cache)
 }
 
 func executeUpdateRowVal(conn *sqlite.Conn, table *tableInfo, rowVal reflect.Value, cache bool) error {
@@ -231,75 +339,43 @@ func executeUpdateRowVal(conn *sqlite.Conn, table *tableInfo, rowVal reflect.Val
 		addr.Set(rowVal)
 		rowVal = addr
 	}
+	return executeUpdateRowSingle(conn, table, rowVal.Addr().UnsafePointer(), cache)
+}
 
+func executeUpdateRowSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, cache bool) error {
 	if len(table.pkCols) == 0 {
-		return lumo.WrapString("update row requires primary key fields marked with 'pk' tag").
+		return lumo.WrapString("update requires model with primary key field marked with 'pk' tag").
 			Include("dema_table", table.name).
 			Include("dema_operation", "UPDATE").
 			Include("dema_expected", "primary key definition")
 	}
 
-	var setCols []string
-	var args []any
+	mask := table.getNonZeroColMask(p)
+	sql, cols := table.getUpdateRowPlan(mask)
+	if sql == "" || len(cols) == 0 {
+		return nil
+	}
 
-	for _, col := range table.nonPkCols {
-		val, include, err := table.extractColValue(col, rowVal)
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
+
+	for _, col := range cols {
+		val, _, err := col.extractValue(p)
 		if err != nil {
 			return lumo.WrapError(err).
 				Include("dema_table", table.name).
 				Include("dema_operation", "UPDATE").
 				Include("dema_expected", "field value extraction")
 		}
-		if !include {
-			continue
-		}
-		setCols = append(setCols, col.name)
-		args = append(args, encodeValue(val))
+		opts.Args = append(opts.Args, encodeValue(val))
 	}
 
-	if len(setCols) == 0 {
-		return nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString(`UPDATE "`)
-	sb.WriteString(table.name)
-	sb.WriteString(`" SET `)
-	for i, name := range setCols {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		sb.WriteString(`"`)
-		sb.WriteString(name)
-		sb.WriteString(`" = ?`)
-	}
-
-	sb.WriteString(` WHERE `)
-	for i, pk := range table.pkCols {
-		if i > 0 {
-			sb.WriteString(` AND `)
-		}
-		sb.WriteString(`"`)
-		sb.WriteString(pk.name)
-		sb.WriteString(`" = ?`)
-
-		val, _, err := table.extractColValue(pk, rowVal)
-		if err != nil {
-			return lumo.WrapError(err).
-				Include("dema_table", table.name).
-				Include("dema_operation", "UPDATE").
-				Include("dema_expected", "primary key value extraction")
-		}
-		args = append(args, encodeValue(val))
-	}
-	sb.WriteString(`;`)
-
-	opts := &sqlitex.ExecOptions{Args: args}
 	var err error
 	if cache {
-		err = sqlitex.Execute(conn, sb.String(), opts)
+		err = sqlitex.Execute(conn, sql, opts)
 	} else {
-		err = sqlitex.ExecuteTransient(conn, sb.String(), opts)
+		err = sqlitex.ExecuteTransient(conn, sql, opts)
 	}
 
 	if err != nil {

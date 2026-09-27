@@ -3,7 +3,6 @@ package dema
 import (
 	"context"
 	"reflect"
-	"strings"
 
 	"github.com/amatsagu/lumo"
 	"zombiezen.com/go/sqlite"
@@ -81,21 +80,27 @@ func (b *DeleteBuilder[T]) Run(args ...any) error {
 }
 
 func (b *DeleteBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, cache bool) error {
-	var sb strings.Builder
-	var args []any
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
 
-	sb.WriteString(`DELETE FROM "`)
-	sb.WriteString(table.name)
-	sb.WriteString(`" WHERE `)
-	b.cond.toSQL(&sb, &args)
-	sb.WriteString(`;`)
+	qb := getQueryBuffer()
+	defer putQueryBuffer(qb)
 
-	opts := &sqlitex.ExecOptions{Args: args}
+	qb.WriteString(`DELETE FROM "`)
+	qb.WriteString(table.name)
+	qb.WriteString(`" WHERE `)
+	b.cond.writeSQL(qb)
+	opts.Args = b.cond.appendArgs(opts.Args)
+	qb.WriteString(`;`)
+
+	querySQL := table.getUpdateSQL(qb)
+
 	var err error
 	if cache {
-		err = sqlitex.Execute(conn, sb.String(), opts)
+		err = sqlitex.Execute(conn, querySQL, opts)
 	} else {
-		err = sqlitex.ExecuteTransient(conn, sb.String(), opts)
+		err = sqlitex.ExecuteTransient(conn, querySQL, opts)
 	}
 
 	if err != nil {

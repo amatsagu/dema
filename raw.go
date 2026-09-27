@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"unsafe"
 
 	"github.com/amatsagu/lumo"
 	"zombiezen.com/go/sqlite"
@@ -36,47 +37,52 @@ func (db *DB) RawQuery[T any](ctx context.Context, sql string, cache bool, args 
 }
 
 func executeRawQuery[T any](conn *sqlite.Conn, table *tableInfo, sql string, cache bool, args ...any) ([]T, error) {
-	encodedArgs := make([]any, len(args))
-	for i, arg := range args {
-		encodedArgs[i] = encodeValue(arg)
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
+	for _, arg := range args {
+		opts.Args = append(opts.Args, encodeValue(arg))
 	}
 
 	results := make([]T, 0, 16)
 	var colMap []*colInfo
 	var mapInited bool
 
-	opts := &sqlitex.ExecOptions{
-		Args: encodedArgs,
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			if !mapInited {
-				colCount := stmt.ColumnCount()
-				colMap = make([]*colInfo, colCount)
-				for i := 0; i < colCount; i++ {
-					colName := stmt.ColumnName(i)
-					if col, ok := table.colByName[colName]; ok {
-						colMap[i] = col
-					} else if col, ok := table.colByName[strings.ToLower(colName)]; ok {
-						colMap[i] = col
-					}
-				}
-				mapInited = true
-			}
+	var zero T
+	typ := reflect.TypeOf(zero)
+	isPtrModel := typ.Kind() == reflect.Pointer
 
-			var row T
-			val := reflect.ValueOf(&row).Elem()
-			scanTarget := val
-			if scanTarget.Kind() == reflect.Pointer {
-				if scanTarget.IsNil() {
-					scanTarget.Set(reflect.New(scanTarget.Type().Elem()))
+	opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+		if !mapInited {
+			colCount := stmt.ColumnCount()
+			colMap = make([]*colInfo, colCount)
+			for i := 0; i < colCount; i++ {
+				colName := stmt.ColumnName(i)
+				if col, ok := table.colByName[colName]; ok {
+					colMap[i] = col
+				} else if col, ok := table.colByName[strings.ToLower(colName)]; ok {
+					colMap[i] = col
 				}
-				scanTarget = scanTarget.Elem()
 			}
-			if err := table.scanRowMapped(stmt, colMap, scanTarget); err != nil {
+			mapInited = true
+		}
+
+		var row T
+		p := unsafe.Pointer(&row)
+		if isPtrModel {
+			elem := reflect.New(table.typ)
+			p = elem.UnsafePointer()
+			if err := table.scanRowMappedPtr(stmt, colMap, p); err != nil {
 				return err
 			}
-			results = append(results, row)
+			results = append(results, elem.Interface().(T))
 			return nil
-		},
+		}
+		if err := table.scanRowMappedPtr(stmt, colMap, p); err != nil {
+			return err
+		}
+		results = append(results, row)
+		return nil
 	}
 
 	var err error
@@ -110,12 +116,13 @@ func (db *DB) RawExecute(ctx context.Context, sql string, cache bool, args ...an
 }
 
 func executeRawExecute(conn *sqlite.Conn, sql string, cache bool, args ...any) error {
-	encodedArgs := make([]any, len(args))
-	for i, arg := range args {
-		encodedArgs[i] = encodeValue(arg)
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
+	for _, arg := range args {
+		opts.Args = append(opts.Args, encodeValue(arg))
 	}
 
-	opts := &sqlitex.ExecOptions{Args: encodedArgs}
 	var err error
 	if cache {
 		err = sqlitex.Execute(conn, sql, opts)

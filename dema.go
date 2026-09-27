@@ -15,10 +15,11 @@ import (
 var memCounter uint64
 
 type DB struct {
-	pool   *sqlitex.Pool
-	tables map[reflect.Type]*tableInfo
-	mu     sync.RWMutex
-	closed bool
+	tablesValue atomic.Pointer[map[reflect.Type]*tableInfo]
+	pool        *sqlitex.Pool
+	tables      map[reflect.Type]*tableInfo
+	mu          sync.RWMutex
+	closed      bool
 }
 
 func Open(path string, opts ...any) (*DB, error) {
@@ -59,10 +60,13 @@ func Open(path string, opts ...any) (*DB, error) {
 			Include("dema_expected", "valid sqlite pool")
 	}
 
-	return &DB{
+	tablesMap := make(map[reflect.Type]*tableInfo)
+	db := &DB{
 		pool:   pool,
-		tables: make(map[reflect.Type]*tableInfo),
-	}, nil
+		tables: tablesMap,
+	}
+	db.tablesValue.Store(&tablesMap)
+	return db, nil
 }
 
 func (db *DB) Close() error {
@@ -109,18 +113,22 @@ func (db *DB) Table[T any](name string, onInsert, onUpdate, onDelete func(*T) er
 	}
 
 	db.tables[typ] = info
+	newMap := make(map[reflect.Type]*tableInfo, len(db.tables))
+	for k, v := range db.tables {
+		newMap[k] = v
+	}
+	db.tablesValue.Store(&newMap)
 }
 
 func (db *DB) getTableInfo(typ reflect.Type) (*tableInfo, error) {
-	db.mu.RLock()
-	info, ok := db.tables[typ]
-	db.mu.RUnlock()
-
-	if !ok {
-		return nil, lumo.WrapString("table for type %s is not registered", typ.String()).
-			Include("dema_table", "").
-			Include("dema_operation", "LOOKUP").
-			Include("dema_expected", "registered table")
+	if p := db.tablesValue.Load(); p != nil {
+		if info, ok := (*p)[typ]; ok {
+			return info, nil
+		}
 	}
-	return info, nil
+
+	return nil, lumo.WrapString("table for type %s is not registered", typ.String()).
+		Include("dema_table", "").
+		Include("dema_operation", "LOOKUP").
+		Include("dema_expected", "registered table")
 }

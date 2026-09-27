@@ -2,31 +2,17 @@ package dema
 
 import (
 	"reflect"
+	"unsafe"
 
 	"zombiezen.com/go/sqlite"
 )
 
-func setScalarValue(stmt *sqlite.Stmt, colIdx int, kind reflect.Kind, target reflect.Value) {
-	switch kind {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		target.SetInt(stmt.ColumnInt64(colIdx))
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		target.SetUint(uint64(stmt.ColumnInt64(colIdx)))
-	case reflect.Bool:
-		target.SetBool(stmt.ColumnBool(colIdx))
-	case reflect.Float32, reflect.Float64:
-		target.SetFloat(stmt.ColumnFloat(colIdx))
-	case reflect.String:
-		target.SetString(stmt.ColumnText(colIdx))
-	}
-}
-
-func scanCol(stmt *sqlite.Stmt, colIdx int, col *colInfo, structVal reflect.Value) error {
-	fieldVal := structVal.FieldByIndex(col.index)
+func scanColPtr(stmt *sqlite.Stmt, colIdx int, col *colInfo, base unsafe.Pointer) error {
+	fieldPtr := unsafe.Add(base, col.offset)
 
 	if stmt.ColumnIsNull(colIdx) {
 		if col.isPtr {
-			fieldVal.Set(reflect.Zero(col.typ))
+			*(*uintptr)(fieldPtr) = 0
 		}
 		return nil
 	}
@@ -45,44 +31,113 @@ func scanCol(stmt *sqlite.Stmt, colIdx int, col *colInfo, structVal reflect.Valu
 			stmt.ColumnBytes(colIdx, buf)
 			raw = buf
 		}
-
-		if dec, ok := fieldVal.Addr().Interface().(FieldDecoder); ok {
-			return dec.DecodeDema(raw)
-		}
+		dec := reflect.NewAt(col.typ, fieldPtr).Interface().(FieldDecoder)
+		return dec.DecodeDema(raw)
 	}
 
 	if col.isPtr {
-		elemType := col.typ.Elem()
-		elemVal := reflect.New(elemType).Elem()
-		setScalarValue(stmt, colIdx, col.kind, elemVal)
-		fieldVal.Set(elemVal.Addr())
+		switch col.elemKind {
+		case reflect.String:
+			s := stmt.ColumnText(colIdx)
+			*(**string)(fieldPtr) = &s
+		case reflect.Int:
+			v := int(stmt.ColumnInt64(colIdx))
+			*(**int)(fieldPtr) = &v
+		case reflect.Int64:
+			v := stmt.ColumnInt64(colIdx)
+			*(**int64)(fieldPtr) = &v
+		case reflect.Int32:
+			v := int32(stmt.ColumnInt64(colIdx))
+			*(**int32)(fieldPtr) = &v
+		case reflect.Int16:
+			v := int16(stmt.ColumnInt64(colIdx))
+			*(**int16)(fieldPtr) = &v
+		case reflect.Int8:
+			v := int8(stmt.ColumnInt64(colIdx))
+			*(**int8)(fieldPtr) = &v
+		case reflect.Uint:
+			v := uint(stmt.ColumnInt64(colIdx))
+			*(**uint)(fieldPtr) = &v
+		case reflect.Uint64:
+			v := uint64(stmt.ColumnInt64(colIdx))
+			*(**uint64)(fieldPtr) = &v
+		case reflect.Uint32:
+			v := uint32(stmt.ColumnInt64(colIdx))
+			*(**uint32)(fieldPtr) = &v
+		case reflect.Uint16:
+			v := uint16(stmt.ColumnInt64(colIdx))
+			*(**uint16)(fieldPtr) = &v
+		case reflect.Uint8:
+			v := uint8(stmt.ColumnInt64(colIdx))
+			*(**uint8)(fieldPtr) = &v
+		case reflect.Bool:
+			v := stmt.ColumnBool(colIdx)
+			*(**bool)(fieldPtr) = &v
+		case reflect.Float64:
+			v := stmt.ColumnFloat(colIdx)
+			*(**float64)(fieldPtr) = &v
+		case reflect.Float32:
+			v := float32(stmt.ColumnFloat(colIdx))
+			*(**float32)(fieldPtr) = &v
+		default:
+		}
 		return nil
 	}
 
 	if col.isRuneSlice {
-		fieldVal.Set(reflect.ValueOf([]rune(stmt.ColumnText(colIdx))))
+		*(*[]rune)(fieldPtr) = []rune(stmt.ColumnText(colIdx))
 		return nil
 	}
 
-	setScalarValue(stmt, colIdx, col.kind, fieldVal)
+	switch col.kind {
+	case reflect.Int:
+		*(*int)(fieldPtr) = int(stmt.ColumnInt64(colIdx))
+	case reflect.Int64:
+		*(*int64)(fieldPtr) = stmt.ColumnInt64(colIdx)
+	case reflect.Int32:
+		*(*int32)(fieldPtr) = int32(stmt.ColumnInt64(colIdx))
+	case reflect.Int16:
+		*(*int16)(fieldPtr) = int16(stmt.ColumnInt64(colIdx))
+	case reflect.Int8:
+		*(*int8)(fieldPtr) = int8(stmt.ColumnInt64(colIdx))
+	case reflect.Uint:
+		*(*uint)(fieldPtr) = uint(stmt.ColumnInt64(colIdx))
+	case reflect.Uint64:
+		*(*uint64)(fieldPtr) = uint64(stmt.ColumnInt64(colIdx))
+	case reflect.Uint32:
+		*(*uint32)(fieldPtr) = uint32(stmt.ColumnInt64(colIdx))
+	case reflect.Uint16:
+		*(*uint16)(fieldPtr) = uint16(stmt.ColumnInt64(colIdx))
+	case reflect.Uint8:
+		*(*uint8)(fieldPtr) = uint8(stmt.ColumnInt64(colIdx))
+	case reflect.Bool:
+		*(*bool)(fieldPtr) = stmt.ColumnBool(colIdx)
+	case reflect.Float64:
+		*(*float64)(fieldPtr) = stmt.ColumnFloat(colIdx)
+	case reflect.Float32:
+		*(*float32)(fieldPtr) = float32(stmt.ColumnFloat(colIdx))
+	case reflect.String:
+		*(*string)(fieldPtr) = stmt.ColumnText(colIdx)
+	default:
+	}
 	return nil
 }
 
-func (t *tableInfo) scanRowDirect(stmt *sqlite.Stmt, val reflect.Value) error {
+func (t *tableInfo) scanRowDirectPtr(stmt *sqlite.Stmt, base unsafe.Pointer) error {
 	for i, col := range t.allCols {
-		if err := scanCol(stmt, i, col, val); err != nil {
+		if err := scanColPtr(stmt, i, col, base); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (t *tableInfo) scanRowMapped(stmt *sqlite.Stmt, colMap []*colInfo, val reflect.Value) error {
+func (t *tableInfo) scanRowMappedPtr(stmt *sqlite.Stmt, colMap []*colInfo, base unsafe.Pointer) error {
 	for i, col := range colMap {
 		if col == nil {
 			continue
 		}
-		if err := scanCol(stmt, i, col, val); err != nil {
+		if err := scanColPtr(stmt, i, col, base); err != nil {
 			return err
 		}
 	}

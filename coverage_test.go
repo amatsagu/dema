@@ -766,3 +766,144 @@ func TestMoreRemainingBranches(t *testing.T) {
 	_ = sqlitex.Execute(cleanConn, "ROLLBACK;", nil)
 	db.pool.Put(cleanConn)
 }
+
+type AllTypesModel struct {
+	PInt      *int     `db:"p_int,omitzero"`
+	PInt8     *int8    `db:"p_int8,omitzero"`
+	PInt16    *int16   `db:"p_int16,omitzero"`
+	PInt32    *int32   `db:"p_int32,omitzero"`
+	PInt64    *int64   `db:"p_int64,omitzero"`
+	PUint     *uint    `db:"p_uint,omitzero"`
+	PUint8    *uint8   `db:"p_uint8,omitzero"`
+	PUint16   *uint16  `db:"p_uint16,omitzero"`
+	PUint32   *uint32  `db:"p_uint32,omitzero"`
+	PUint64   *uint64  `db:"p_uint64,omitzero"`
+	PFloat32  *float32 `db:"p_float32,omitzero"`
+	PFloat64  *float64 `db:"p_float64,omitzero"`
+	PBool     *bool    `db:"p_bool,omitzero"`
+	PStr      *string  `db:"p_str,omitzero"`
+	Str       string   `db:"str,omitzero"`
+	ID        int      `db:"id,pk"`
+	F64       float64  `db:"f64,omitzero"`
+	I64       int64    `db:"i64,omitzero"`
+	U64       uint64   `db:"u64,omitzero"`
+	I         int      `db:"i,omitzero"`
+	U         uint     `db:"u,omitzero"`
+	I32       int32    `db:"i32,omitzero"`
+	U32       uint32   `db:"u32,omitzero"`
+	F32       float32  `db:"f32,omitzero"`
+	I16       int16    `db:"i16,omitzero"`
+	U16       uint16   `db:"u16,omitzero"`
+	I8        int8     `db:"i8,omitzero"`
+	U8        uint8    `db:"u8,omitzero"`
+	B         bool     `db:"b,omitzero"`
+}
+
+func TestAllTypeScanningAndHooks(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	col := NewField[User, int]("age")
+	strCol := NewField[User, string]("surname")
+	ConditionSQL(Equal(col, 20))
+	ConditionSQL(Greater(col, 20))
+	ConditionSQL(Lesser(col, 20))
+	ConditionSQL(Within(col, 20, 30))
+	ConditionSQL(Within(col))
+	ConditionSQL(NotWithin(col, 20, 30))
+	ConditionSQL(NotWithin(col))
+	ConditionSQL(Range(col, 20, 30))
+	ConditionSQL(OutsideRange(col, 20, 30))
+	ConditionSQL(And(Equal(col, 20), Greater(strCol, "a")))
+	ConditionSQL(Or(Equal(col, 20), Lesser(strCol, "z")))
+
+	qbHuge := &queryBuffer{buf: make([]byte, 70000)}
+	putQueryBuffer(qbHuge)
+
+	_ = db.RawExecute(ctx, `CREATE TABLE all_types (
+		id INTEGER PRIMARY KEY,
+		p_int INTEGER, p_int8 INTEGER, p_int16 INTEGER, p_int32 INTEGER, p_int64 INTEGER,
+		p_uint INTEGER, p_uint8 INTEGER, p_uint16 INTEGER, p_uint32 INTEGER, p_uint64 INTEGER,
+		p_float32 REAL, p_float64 REAL, p_bool INTEGER, p_str TEXT,
+		str TEXT, f64 REAL, i64 INTEGER, u64 INTEGER, i INTEGER, u INTEGER,
+		i32 INTEGER, u32 INTEGER, f32 REAL, i16 INTEGER, u16 INTEGER,
+		i8 INTEGER, u8 INTEGER, b INTEGER
+	);`, false)
+
+	db.Table[AllTypesModel]("all_types", nil, nil, nil)
+
+	// Insert zero values
+	z := AllTypesModel{ID: 1}
+	if err := db.Insert(ctx, z); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert non-zero values
+	pi := 1; pi8 := int8(2); pi16 := int16(3); pi32 := int32(4); pi64 := int64(5)
+	pu := uint(6); pu8 := uint8(7); pu16 := uint16(8); pu32 := uint32(9); pu64 := uint64(10)
+	pf32 := float32(11.5); pf64 := 12.5; pb := true; ps := "ptrstr"
+
+	nz := AllTypesModel{
+		ID: 2, PInt: &pi, PInt8: &pi8, PInt16: &pi16, PInt32: &pi32, PInt64: &pi64,
+		PUint: &pu, PUint8: &pu8, PUint16: &pu16, PUint32: &pu32, PUint64: &pu64,
+		PFloat32: &pf32, PFloat64: &pf64, PBool: &pb, PStr: &ps,
+		Str: "hello", F64: 99.9, I64: 88, U64: 77, I: 66, U: 55,
+		I32: 44, U32: 33, F32: 22.5, I16: 11, U16: 10, I8: 9, U8: 8, B: true,
+	}
+	if err := db.Insert(ctx, nz); err != nil {
+		t.Fatal(err)
+	}
+
+	// Select back
+	rows, err := db.Select[AllTypesModel]().Run(ctx)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %v (%d)", err, len(rows))
+	}
+
+	// Update row
+	nz.Str = "updated"
+	if err := db.UpdateRow(ctx, nz); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upsert
+	if err := db.Upsert(ctx, nz); err != nil {
+		t.Fatal(err)
+	}
+
+	// Multi-row and slice insert in transaction
+	tx, err := db.Transaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	nz3 := AllTypesModel{ID: 3, Str: "three"}
+	nz4 := AllTypesModel{ID: 4, Str: "four"}
+	if err := tx.Insert(nz3, nz4); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Upsert(nz3, nz4); err != nil {
+		t.Fatal(err)
+	}
+
+	slice := []AllTypesModel{{ID: 5, Str: "five"}, {ID: 6, Str: "six"}}
+	if err := tx.Insert(slice); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tx.UpdateRow(nz3); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.UpdateRow(slice[0], slice[1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateRow(ctx, nz3, nz4); err != nil {
+		t.Fatal(err)
+	}
+}
+

@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sync"
+	"unsafe"
 
 	"github.com/amatsagu/lumo"
 	"zombiezen.com/go/sqlite"
@@ -106,7 +107,7 @@ func (tx *Tx) checkActive() error {
 
 type TxSelectBuilder[T any] struct {
 	tx      *Tx
-	builder *SelectBuilder[T]
+	builder SelectBuilder[T]
 }
 
 func (tx *Tx) Select[T any]() *TxSelectBuilder[T] {
@@ -117,22 +118,22 @@ func (tx *Tx) Select[T any]() *TxSelectBuilder[T] {
 }
 
 func (b *TxSelectBuilder[T]) Where(cond Condition) *TxSelectBuilder[T] {
-	b.builder.Where(cond)
+	b.builder = b.builder.Where(cond)
 	return b
 }
 
 func (b *TxSelectBuilder[T]) OrderBy[V any](field Field[T, V], dir OrderDirection) *TxSelectBuilder[T] {
-	b.builder.OrderBy(field, dir)
+	b.builder = b.builder.OrderBy(field, dir)
 	return b
 }
 
 func (b *TxSelectBuilder[T]) Limit(amount int) *TxSelectBuilder[T] {
-	b.builder.Limit(amount)
+	b.builder = b.builder.Limit(amount)
 	return b
 }
 
 func (b *TxSelectBuilder[T]) Page(current, size int) *TxSelectBuilder[T] {
-	b.builder.Page(current, size)
+	b.builder = b.builder.Page(current, size)
 	return b
 }
 
@@ -157,32 +158,48 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 		return nil, err
 	}
 
-	querySQL, args := b.builder.buildSQL(table)
-
 	capHint := 16
 	if b.builder.hasLim && b.builder.limit > 0 {
 		capHint = b.builder.limit
 	}
 	results := make([]T, 0, capHint)
 
-	opts := &sqlitex.ExecOptions{
-		Args: args,
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			var row T
-			val := reflect.ValueOf(&row).Elem()
-			scanTarget := val
-			if scanTarget.Kind() == reflect.Pointer {
-				if scanTarget.IsNil() {
-					scanTarget.Set(reflect.New(scanTarget.Type().Elem()))
-				}
-				scanTarget = scanTarget.Elem()
-			}
-			if err := table.scanRowDirect(stmt, scanTarget); err != nil {
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
+
+	querySQL := b.builder.buildSQL(table, opts)
+
+	isPtrModel := typ != reflect.TypeOf(zero)
+	if isPtrModel {
+		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+			elem := reflect.New(table.typ)
+			if err := table.scanRowDirectPtr(stmt, elem.UnsafePointer()); err != nil {
 				return err
 			}
-			results = append(results, row)
+			results = append(results, elem.Interface().(T))
 			return nil
-		},
+		}
+	} else {
+		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+			idx := len(results)
+			if idx == cap(results) {
+				newCap := cap(results) * 2
+				if newCap == 0 {
+					newCap = 4
+				}
+				newRes := make([]T, len(results), newCap)
+				copy(newRes, results)
+				results = newRes
+			}
+			results = results[:idx+1]
+			rowPtr := unsafe.Pointer(&results[idx])
+			if err := table.scanRowDirectPtr(stmt, rowPtr); err != nil {
+				results = results[:idx]
+				return err
+			}
+			return nil
+		}
 	}
 
 	if cache {
@@ -204,6 +221,39 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 func (tx *Tx) Insert(args ...any) error {
 	if err := tx.checkActive(); err != nil {
 		return err
+	}
+	if len(args) == 0 {
+		return nil
+	}
+
+	var row any
+	if len(args) == 1 {
+		row = args[0]
+	} else if len(args) == 2 {
+		if _, ok := args[0].(context.Context); ok {
+			row = args[1]
+		}
+	}
+
+	if row != nil {
+		if p, typ, ok := extractSingleRow(row); ok {
+			table, err := tx.db.getTableInfo(typ)
+			if err != nil {
+				return err
+			}
+			if table.onInsert != nil {
+				rowPtr := reflect.New(table.typ)
+				copy(unsafe.Slice((*byte)(rowPtr.UnsafePointer()), table.typ.Size()), unsafe.Slice((*byte)(p), table.typ.Size()))
+				if err := table.onInsert(rowPtr.Interface()); err != nil {
+					return lumo.WrapError(err).
+						Include("dema_table", table.name).
+						Include("dema_operation", "INSERT").
+						Include("dema_expected", "onInsert hook validation")
+				}
+				p = rowPtr.UnsafePointer()
+			}
+			return executeInsertSingle(tx.conn, table, p)
+		}
 	}
 
 	_, rowVals, err := parseContextAndRows(args)
@@ -237,6 +287,45 @@ func (tx *Tx) Insert(args ...any) error {
 func (tx *Tx) Upsert(args ...any) error {
 	if err := tx.checkActive(); err != nil {
 		return err
+	}
+	if len(args) == 0 {
+		return nil
+	}
+
+	var row any
+	if len(args) == 1 {
+		row = args[0]
+	} else if len(args) == 2 {
+		if _, ok := args[0].(context.Context); ok {
+			row = args[1]
+		}
+	}
+
+	if row != nil {
+		if p, typ, ok := extractSingleRow(row); ok {
+			table, err := tx.db.getTableInfo(typ)
+			if err != nil {
+				return err
+			}
+			if len(table.pkCols) == 0 {
+				return lumo.WrapString("upsert requires at least one primary key field marked with 'pk' tag").
+					Include("dema_table", table.name).
+					Include("dema_operation", "UPSERT").
+					Include("dema_expected", "primary key definition")
+			}
+			if table.onInsert != nil {
+				rowPtr := reflect.New(table.typ)
+				copy(unsafe.Slice((*byte)(rowPtr.UnsafePointer()), table.typ.Size()), unsafe.Slice((*byte)(p), table.typ.Size()))
+				if err := table.onInsert(rowPtr.Interface()); err != nil {
+					return lumo.WrapError(err).
+						Include("dema_table", table.name).
+						Include("dema_operation", "UPSERT").
+						Include("dema_expected", "onInsert hook validation")
+				}
+				p = rowPtr.UnsafePointer()
+			}
+			return executeUpsertSingle(tx.conn, table, p)
+		}
 	}
 
 	_, rowVals, err := parseContextAndRows(args)
@@ -276,7 +365,7 @@ func (tx *Tx) Upsert(args ...any) error {
 
 type TxUpdateBuilder[T any] struct {
 	tx      *Tx
-	builder *UpdateBuilder[T]
+	builder UpdateBuilder[T]
 }
 
 func (tx *Tx) Update[T any](rows ...T) *TxUpdateBuilder[T] {
@@ -287,17 +376,17 @@ func (tx *Tx) Update[T any](rows ...T) *TxUpdateBuilder[T] {
 }
 
 func (b *TxUpdateBuilder[T]) Set[V any](field Field[T, V], val V) *TxUpdateBuilder[T] {
-	b.builder.Set(field, val)
+	b.builder = b.builder.Set(field, val)
 	return b
 }
 
 func (b *TxUpdateBuilder[T]) Where(cond Condition) *TxUpdateBuilder[T] {
-	b.builder.Where(cond)
+	b.builder = b.builder.Where(cond)
 	return b
 }
 
 func (b *TxUpdateBuilder[T]) Row(row T) *TxUpdateBuilder[T] {
-	b.builder.Row(row)
+	b.builder = b.builder.Row(row)
 	return b
 }
 
@@ -311,15 +400,18 @@ func (b *TxUpdateBuilder[T]) Run(cacheOpt ...bool) error {
 		cache = cacheOpt[0]
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
-	table, err := b.tx.db.getTableInfo(typ)
-	if err != nil {
-		return err
+	table := b.builder.table
+	if table == nil {
+		var zero T
+		typ := reflect.TypeOf(zero)
+		if typ != nil && typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		var err error
+		table, err = b.tx.db.getTableInfo(typ)
+		if err != nil {
+			return err
+		}
 	}
 
 	return b.builder.executeWithConn(b.tx.conn, table, cache)
@@ -328,6 +420,48 @@ func (b *TxUpdateBuilder[T]) Run(cacheOpt ...bool) error {
 func (tx *Tx) UpdateRow(args ...any) error {
 	if err := tx.checkActive(); err != nil {
 		return err
+	}
+	if len(args) == 0 {
+		return lumo.WrapString("no struct row provided for update").
+			Include("dema_table", "").
+			Include("dema_operation", "UPDATE").
+			Include("dema_expected", "model struct")
+	}
+
+	var row any
+	if len(args) == 1 {
+		row = args[0]
+	} else if len(args) == 2 {
+		if _, ok := args[0].(context.Context); ok {
+			row = args[1]
+		}
+	}
+
+	if row != nil {
+		if p, typ, ok := extractSingleRow(row); ok {
+			table, err := tx.db.getTableInfo(typ)
+			if err != nil {
+				return err
+			}
+			if len(table.pkCols) == 0 {
+				return lumo.WrapString("update requires model with primary key field marked with 'pk' tag").
+					Include("dema_table", table.name).
+					Include("dema_operation", "UPDATE").
+					Include("dema_expected", "primary key definition")
+			}
+			if table.onUpdate != nil {
+				rowPtr := reflect.New(table.typ)
+				copy(unsafe.Slice((*byte)(rowPtr.UnsafePointer()), table.typ.Size()), unsafe.Slice((*byte)(p), table.typ.Size()))
+				if err := table.onUpdate(rowPtr.Interface()); err != nil {
+					return lumo.WrapError(err).
+						Include("dema_table", table.name).
+						Include("dema_operation", "UPDATE").
+						Include("dema_expected", "onUpdate hook validation")
+				}
+				p = rowPtr.UnsafePointer()
+			}
+			return executeUpdateRowSingle(tx.conn, table, p, true)
+		}
 	}
 
 	_, rowVals, err := parseContextAndRows(args)
