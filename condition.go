@@ -28,8 +28,8 @@ func encodeValue(v any) any {
 }
 
 type equalCond struct {
-	col string
 	val any
+	col string
 }
 
 func (c equalCond) isCondition() { _ = c.col }
@@ -44,8 +44,8 @@ func Equal[T any, V any](field Field[T, V], val V) Condition {
 }
 
 type greaterCond struct {
-	col string
 	val any
+	col string
 }
 
 func (c greaterCond) isCondition() { _ = c.col }
@@ -60,8 +60,8 @@ func Greater[T any, V any](field Field[T, V], val V) Condition {
 }
 
 type lesserCond struct {
-	col string
 	val any
+	col string
 }
 
 func (c lesserCond) isCondition() { _ = c.col }
@@ -138,9 +138,9 @@ func NotWithin[T any, V any](field Field[T, V], values ...V) Condition {
 }
 
 type rangeCond struct {
-	col string
 	min any
 	max any
+	col string
 }
 
 func (c rangeCond) isCondition() { _ = c.col }
@@ -155,9 +155,9 @@ func Range[T any, V any](field Field[T, V], min, max V) Condition {
 }
 
 type outsideRangeCond struct {
-	col string
 	min any
 	max any
+	col string
 }
 
 func (c outsideRangeCond) isCondition() { _ = c.col }
@@ -172,9 +172,9 @@ func OutsideRange[T any, V any](field Field[T, V], min, max V) Condition {
 }
 
 type binaryCond struct {
-	op string
 	a  Condition
 	b  Condition
+	op string
 }
 
 func (c binaryCond) isCondition() { _ = c.op }

@@ -16,8 +16,8 @@ var memCounter uint64
 
 type DB struct {
 	pool   *sqlitex.Pool
-	mu     sync.RWMutex
 	tables map[reflect.Type]*tableInfo
+	mu     sync.RWMutex
 	closed bool
 }
 

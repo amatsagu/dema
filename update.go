@@ -11,16 +11,16 @@ import (
 )
 
 type setClause struct {
-	col string
 	val any
+	col string
 }
 
 type UpdateBuilder[T any] struct {
+	cond   Condition
+	row    T
 	db     *DB
 	sets   []setClause
-	cond   Condition
 	hasRow bool
-	row    T
 }
 
 func (db *DB) Update[T any](rows ...T) *UpdateBuilder[T] {

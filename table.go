@@ -14,10 +14,10 @@ var (
 )
 
 type colInfo struct {
+	typ         reflect.Type
 	name        string
 	fieldName   string
 	index       []int
-	typ         reflect.Type
 	kind        reflect.Kind
 	isPK        bool
 	isOmitZero  bool
@@ -28,18 +28,16 @@ type colInfo struct {
 }
 
 type tableInfo struct {
-	name      string
-	typ       reflect.Type
-	allCols   []*colInfo
-	pkCols    []*colInfo
-	nonPkCols []*colInfo
-	colByName map[string]*colInfo
-
+	typ              reflect.Type
+	colByName        map[string]*colInfo
+	onInsert         func(any) error
+	onUpdate         func(any) error
+	onDelete         func(any) error
+	name             string
 	defaultSelectSQL string
-
-	onInsert func(any) error
-	onUpdate func(any) error
-	onDelete func(any) error
+	allCols          []*colInfo
+	pkCols           []*colInfo
+	nonPkCols        []*colInfo
 }
 
 func parseTag(tag string, defaultName string) (name string, isPK bool, isOmitZero bool, ignore bool) {

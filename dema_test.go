@@ -33,38 +33,38 @@ func (c *CustomID) DecodeDema(v any) error {
 }
 
 type User struct {
-	ID     uint32  `db:"id,pk,omitzero"`
+	Bio    *string `db:"bio"`
 	Name   string  `db:"surname"`
 	Age    int     `db:"age"`
-	Active bool    `db:"active"`
-	Bio    *string `db:"bio"`
 	Score  float64 `db:"score"`
+	ID     uint32  `db:"id,pk,omitzero"`
+	Active bool    `db:"active"`
 }
 
 type Product struct {
 	SKU      string `db:"sku,pk"`
 	Name     string `db:"name"`
+	Category string `db:"category"`
 	Price    int    `db:"price"`
 	Stock    int    `db:"stock"`
-	Category string `db:"category"`
 }
 
 type Order struct {
+	Status   string  `db:"status"`
 	OrderID  int     `db:"order_id,pk"`
 	ItemID   int     `db:"item_id,pk"`
 	Quantity int     `db:"quantity"`
 	Total    float64 `db:"total"`
-	Status   string  `db:"status"`
 }
 
 type CustomModel struct {
-	ID   CustomID `db:"id,pk"`
 	Code string   `db:"code"`
+	ID   CustomID `db:"id,pk"`
 }
 
 type RuneModel struct {
-	ID    int    `db:"id,pk"`
 	Chars []rune `db:"chars"`
+	ID    int    `db:"id,pk"`
 }
 
 type BaseAudit struct {
@@ -72,16 +72,16 @@ type BaseAudit struct {
 }
 
 type EmbeddedModel struct {
-	ID int `db:"id,pk"`
 	BaseAudit
 	Title string `db:"title"`
+	ID    int    `db:"id,pk"`
 }
 
 type IgnoredFieldModel struct {
-	ID      int    `db:"id,pk"`
 	Name    string `db:"name"`
 	Ignored string `db:"-"`
 	private string
+	ID      int `db:"id,pk"`
 }
 
 type PKOnlyModel struct {
@@ -1019,8 +1019,8 @@ func TestUpsertAndPKEdgeCases(t *testing.T) {
 	}
 
 	type OmitUpdateModel struct {
-		ID    int    `db:"id,pk"`
 		Extra string `db:"extra,omitzero"`
+		ID    int    `db:"id,pk"`
 	}
 	db.Table[OmitUpdateModel]("omit_update", nil, nil, nil)
 	_ = db.RawExecute(ctx, "CREATE TABLE omit_update (id INTEGER PRIMARY KEY, extra TEXT);", false)
@@ -1124,8 +1124,8 @@ func (e ErrEncoderType) EncodeDema() (any, error) {
 
 type CustomDecoderType struct {
 	TextVal  string
-	FloatVal float64
 	BlobVal  []byte
+	FloatVal float64
 }
 
 func (c *CustomDecoderType) DecodeDema(v any) error {
@@ -1167,10 +1167,10 @@ func TestCoverageBoost(t *testing.T) {
 	}
 
 	type DecModel struct {
-		ID   int               `db:"id,pk"`
 		DecF CustomDecoderType `db:"decf"`
 		DecT CustomDecoderType `db:"dect"`
 		DecB CustomDecoderType `db:"decb"`
+		ID   int               `db:"id,pk"`
 	}
 	db.Table[DecModel]("dec_model", nil, nil, nil)
 	_ = db.RawExecute(ctx, "CREATE TABLE dec_model (id INTEGER PRIMARY KEY, decf REAL, dect TEXT, decb BLOB);", false)
@@ -1237,8 +1237,8 @@ func TestCoverageBoost(t *testing.T) {
 
 func TestExampleMDSnippet(t *testing.T) {
 	type ExampleUser struct {
-		ID   uint32 `db:"id,pk,omitzero"`
 		Name string `db:"surname"`
+		ID   uint32 `db:"id,pk,omitzero"`
 	}
 
 	var ExampleUserField = struct {
@@ -1307,8 +1307,8 @@ func TestPKWithoutOmitZeroAndMissingPK(t *testing.T) {
 	ctx := context.Background()
 
 	type UserNoOmit struct {
-		ID   int    `db:"id,pk"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk"`
 	}
 	_ = db.RawExecute(ctx, "CREATE TABLE users_no_omit (id INTEGER PRIMARY KEY, name TEXT);", false)
 	db.Table[UserNoOmit]("users_no_omit", nil, nil, nil)
@@ -1327,8 +1327,8 @@ func TestPKWithoutOmitZeroAndMissingPK(t *testing.T) {
 	}
 
 	type UserWithOmit struct {
-		ID   int    `db:"id,pk,omitzero"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk,omitzero"`
 	}
 	_ = db.RawExecute(ctx, "CREATE TABLE users_with_omit (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);", false)
 	db.Table[UserWithOmit]("users_with_omit", nil, nil, nil)

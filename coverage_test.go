@@ -45,13 +45,13 @@ func (v ValueDec) DecodeDema(raw any) error {
 }
 
 type PtrEncModel struct {
-	ID   int            `db:"id,pk"`
 	Data PtrReceiverEnc `db:"data"`
+	ID   int            `db:"id,pk"`
 }
 
 type FailEncModel struct {
-	ID   int     `db:"id,pk"`
 	Data FailEnc `db:"data"`
+	ID   int     `db:"id,pk"`
 }
 
 type FailEncPKModel struct {
@@ -60,18 +60,18 @@ type FailEncPKModel struct {
 }
 
 type FailDecModel struct {
-	ID   int     `db:"id,pk"`
 	Data FailDec `db:"data"`
+	ID   int     `db:"id,pk"`
 }
 
 type ValueDecModel struct {
-	ID   int      `db:"id,pk"`
 	Data ValueDec `db:"data"`
+	ID   int      `db:"id,pk"`
 }
 
 type HookTxModel struct {
-	ID   int    `db:"id,pk"`
 	Name string `db:"name"`
+	ID   int    `db:"id,pk"`
 }
 
 func TestConditionEdgeCoverage(t *testing.T) {
@@ -166,12 +166,12 @@ func TestPointerModelsAndCacheFlag(t *testing.T) {
 		t.Fatalf("RawQuery[*User] failed: %v", err)
 	}
 
-	rawNilCtx, err := db.RawQuery[User](context.Background(), "SELECT id, surname FROM users LIMIT 1;", true)
+	rawNilCtx, err := db.RawQuery[User](nil, "SELECT id, surname FROM users LIMIT 1;", true)
 	if err != nil || len(rawNilCtx) == 0 {
 		t.Fatalf("RawQuery with nil ctx failed: %v", err)
 	}
 
-	if err := db.RawExecute(context.Background(), "SELECT 1;", false); err != nil {
+	if err := db.RawExecute(nil, "SELECT 1;", false); err != nil {
 		t.Fatalf("RawExecute with nil ctx and cache=false failed: %v", err)
 	}
 
@@ -344,8 +344,8 @@ func TestSQLExecutionErrorsOnDroppedTable(t *testing.T) {
 	_ = db.RawExecute(ctx, "CREATE TABLE drop_me (id INTEGER PRIMARY KEY, name TEXT);", false)
 
 	type DropMe struct {
-		ID   int    `db:"id,pk"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk"`
 	}
 	db.Table[DropMe]("drop_me", nil, nil, nil)
 
@@ -412,7 +412,7 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 	db.Table("hook_tx", onInsert, onUpdate, onDelete)
 	_ = db.RawExecute(ctx, "INSERT INTO hook_tx (id, name) VALUES (1, 'initial');", false)
 
-	tx, err := db.Transaction(context.Background())
+	tx, err := db.Transaction(nil)
 	if err != nil {
 		t.Fatalf("Transaction with nil ctx failed: %v", err)
 	}
@@ -542,8 +542,8 @@ func TestBuilderHookErrors(t *testing.T) {
 	_ = db.RawExecute(ctx, "CREATE TABLE hook_builder (id INTEGER PRIMARY KEY, name TEXT);", false)
 
 	type HookBuilderModel struct {
-		ID   int    `db:"id,pk"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk"`
 	}
 
 	onUpdateFail := func(m *HookBuilderModel) error {
@@ -603,8 +603,8 @@ func TestMoreRemainingBranches(t *testing.T) {
 
 	_ = db.RawExecute(ctx, "CREATE TABLE upsert_hook (id INT PRIMARY KEY, name TEXT);", false)
 	type UpsertHookModel struct {
-		ID   int    `db:"id,pk"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk"`
 	}
 	onInsert := func(m *UpsertHookModel) error {
 		if m.ID < 0 {
@@ -639,8 +639,8 @@ func TestMoreRemainingBranches(t *testing.T) {
 
 	_ = db.RawExecute(ctx, "CREATE TABLE update_row_arg (id INT PRIMARY KEY, name TEXT);", false)
 	type UpdateRowArgModel struct {
-		ID   int    `db:"id,pk"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk"`
 	}
 	db.Table[UpdateRowArgModel]("update_row_arg", nil, nil, nil)
 	_ = db.Insert(UpdateRowArgModel{ID: 1, Name: "Initial"})
@@ -652,8 +652,8 @@ func TestMoreRemainingBranches(t *testing.T) {
 
 	_ = db.RawExecute(ctx, "CREATE TABLE update_mutate (id INT PRIMARY KEY, name TEXT);", false)
 	type UpdateMutateModel struct {
-		ID   int    `db:"id,pk"`
 		Name string `db:"name"`
+		ID   int    `db:"id,pk"`
 	}
 	onUpdateMutate := func(m *UpdateMutateModel) error {
 		if m != nil && m.Name == "orig" {
