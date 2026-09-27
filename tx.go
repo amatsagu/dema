@@ -19,10 +19,6 @@ type Tx struct {
 }
 
 func (db *DB) Transaction(ctx context.Context) (*Tx, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	conn, err := db.pool.Take(ctx)
 	if err != nil {
 		return nil, lumo.WrapError(err).

@@ -487,7 +487,7 @@ func TestUpdateRowAndBuilder(t *testing.T) {
 	}
 
 	u2 := User{ID: 1, Name: "Row In Builder", Age: 45}
-	err = db.Update[User]().Row(u2).Run(ctx, true)
+	err = db.Update(u2).Run(ctx, true)
 	if err != nil {
 		t.Fatalf("Update builder Row failed: %v", err)
 	}
@@ -751,7 +751,7 @@ func TestHooksValidationAndAbort(t *testing.T) {
 		return fmt.Errorf("deletions are disabled")
 	}
 
-	db.Table[User]("users", onInsert, onUpdate, onDelete)
+	db.Table("users", onInsert, onUpdate, onDelete)
 	ctx := context.Background()
 
 	_ = db.RawExecute(ctx, "CREATE TABLE users (id INTEGER PRIMARY KEY, surname TEXT, age INTEGER, active INTEGER, bio TEXT, score REAL);", false)
@@ -911,7 +911,7 @@ func TestTxQueryBuilders(t *testing.T) {
 	}
 
 	u := User{ID: 1, Name: "TxRowUpdated", Age: 50}
-	if err := tx.Update[User]().Row(u).Run(false); err != nil {
+	if err := tx.Update(u).Run(false); err != nil {
 		t.Fatalf("tx update builder Row failed: %v", err)
 	}
 }
@@ -1265,7 +1265,7 @@ func TestExampleMDSnippet(t *testing.T) {
 	ctx := context.Background()
 	_ = db.RawExecute(ctx, "CREATE TABLE users_example (id INTEGER PRIMARY KEY AUTOINCREMENT, surname TEXT);", false)
 
-	db.Table[ExampleUser]("users_example", nil, onUpdate, nil)
+	db.Table("users_example", nil, onUpdate, nil)
 
 	u1 := ExampleUser{ID: 127, Name: "Amatsagu"}
 	u2 := ExampleUser{Name: "Betta"}
@@ -1397,7 +1397,7 @@ func TestTxAndBuilderExtendedCoverage(t *testing.T) {
 		t.Fatalf("package level Update failed: %v", err)
 	}
 
-	ub := db.Update[User]().Row(User{ID: 1, Name: "AdminRowUpdated"})
+	ub := db.Update(User{ID: 1, Name: "AdminRowUpdated"})
 	if err := ub.Run(); err != nil {
 		t.Fatalf("UpdateBuilder.Row failed: %v", err)
 	}
@@ -1421,7 +1421,7 @@ func TestTxAndBuilderExtendedCoverage(t *testing.T) {
 		t.Fatalf("expected error on tx.Delete without WHERE")
 	}
 
-	txUb := tx.Update[User]().Row(User{ID: 1, Name: "TxRowUpdated"})
+	txUb := tx.Update(User{ID: 1, Name: "TxRowUpdated"})
 	if err := txUb.Run(); err != nil {
 		t.Fatalf("tx.Update with row failed: %v", err)
 	}

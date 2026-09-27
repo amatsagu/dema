@@ -12,10 +12,6 @@ import (
 
 // RawQuery executes a raw SQL query and scans results into a slice of model struct T.
 func (db *DB) RawQuery[T any](ctx context.Context, sql string, cache bool, args ...any) ([]T, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	var zero T
 	typ := reflect.TypeOf(zero)
 	if typ.Kind() == reflect.Pointer {
@@ -101,10 +97,6 @@ func executeRawQuery[T any](conn *sqlite.Conn, table *tableInfo, sql string, cac
 
 // RawExecute executes a raw SQL statement without result scanning.
 func (db *DB) RawExecute(ctx context.Context, sql string, cache bool, args ...any) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	conn, err := db.pool.Take(ctx)
 	if err != nil {
 		return lumo.WrapError(err).

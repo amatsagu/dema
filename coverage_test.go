@@ -166,13 +166,13 @@ func TestPointerModelsAndCacheFlag(t *testing.T) {
 		t.Fatalf("RawQuery[*User] failed: %v", err)
 	}
 
-	rawNilCtx, err := db.RawQuery[User](nil, "SELECT id, surname FROM users LIMIT 1;", true)
-	if err != nil || len(rawNilCtx) == 0 {
-		t.Fatalf("RawQuery with nil ctx failed: %v", err)
+	rawBgCtx, err := db.RawQuery[User](context.Background(), "SELECT id, surname FROM users LIMIT 1;", true)
+	if err != nil || len(rawBgCtx) == 0 {
+		t.Fatalf("RawQuery with context.Background() failed: %v", err)
 	}
 
-	if err := db.RawExecute(nil, "SELECT 1;", false); err != nil {
-		t.Fatalf("RawExecute with nil ctx and cache=false failed: %v", err)
+	if err := db.RawExecute(context.Background(), "SELECT 1;", false); err != nil {
+		t.Fatalf("RawExecute with context.Background() and cache=false failed: %v", err)
 	}
 
 	rawUnknownCol, err := db.RawQuery[User](ctx, "SELECT id, surname, 42 AS non_existent_column FROM users LIMIT 1;", true)
@@ -412,9 +412,9 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 	db.Table("hook_tx", onInsert, onUpdate, onDelete)
 	_ = db.RawExecute(ctx, "INSERT INTO hook_tx (id, name) VALUES (1, 'initial');", false)
 
-	tx, err := db.Transaction(nil)
+	tx, err := db.Transaction(context.Background())
 	if err != nil {
-		t.Fatalf("Transaction with nil ctx failed: %v", err)
+		t.Fatalf("Transaction with context.Background() failed: %v", err)
 	}
 
 	txPtrRows, err := tx.Select[*HookTxModel]().Run(false)
@@ -578,6 +578,9 @@ func TestBuilderHookErrors(t *testing.T) {
 	}
 	defer tx.Rollback()
 
+	if err := tx.Update[HookBuilderModel]().Row(HookBuilderModel{ID: 1, Name: "A"}).Run(); err == nil {
+		t.Fatalf("expected tx.Update.Row to fail on onUpdate hook")
+	}
 	if err := tx.Delete[HookBuilderModel]().Where(Equal(NewField[HookBuilderModel, int]("id"), 1)).Run(); err == nil {
 		t.Fatalf("expected tx.Delete to fail on onDelete hook")
 	}
