@@ -1603,3 +1603,75 @@ func TestRawQueryPrimitives(t *testing.T) {
 	}
 }
 
+func TestOnConnectionHook(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Direct func(*sqlite.Conn) error
+	var called1 int
+	hook1 := func(conn *sqlite.Conn) error {
+		called1++
+		return sqlitex.ExecuteTransient(conn, "PRAGMA application_id = 12345;", nil)
+	}
+
+	db1, err := Open(":memory:", 1, hook1)
+	if err != nil {
+		t.Fatalf("Open with hook1 failed: %v", err)
+	}
+	defer db1.Close()
+
+	appID, err := db1.RawQuery[int](ctx, "PRAGMA application_id;", false)
+	if err != nil || len(appID) != 1 || appID[0] != 12345 {
+		t.Fatalf("expected application_id 12345, got %v (%+v)", err, appID)
+	}
+	if called1 == 0 {
+		t.Fatalf("expected hook1 to be called, got %d", called1)
+	}
+
+	// 2. dema.OnConnection wrapper
+	var called2 int
+	hook2 := OnConnection(func(conn *sqlite.Conn) error {
+		called2++
+		return sqlitex.ExecuteTransient(conn, "PRAGMA user_version = 42;", nil)
+	})
+
+	db2, err := Open(":memory:", 1, hook2)
+	if err != nil {
+		t.Fatalf("Open with OnConnection failed: %v", err)
+	}
+	defer db2.Close()
+
+	userVer, err := db2.RawQuery[int](ctx, "PRAGMA user_version;", false)
+	if err != nil || len(userVer) != 1 || userVer[0] != 42 {
+		t.Fatalf("expected user_version 42, got %v (%+v)", err, userVer)
+	}
+	if called2 == 0 {
+		t.Fatalf("expected hook2 to be called, got %d", called2)
+	}
+
+	// 3. Chained hooks
+	var chainA, chainB bool
+	db3, err := Open(":memory:", 1,
+		func(conn *sqlite.Conn) error {
+			chainA = true
+			return nil
+		},
+		OnConnection(func(conn *sqlite.Conn) error {
+			chainB = true
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Open with chained hooks failed: %v", err)
+	}
+	defer db3.Close()
+
+	_, err = db3.RawQuery[int](ctx, "SELECT 1;", false)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if !chainA || !chainB {
+		t.Fatalf("expected both chained hooks to be called, got A=%v, B=%v", chainA, chainB)
+	}
+}
+
+

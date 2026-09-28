@@ -49,6 +49,10 @@ func main() {
 db, _ := dema.Open(":memory:")                                       // in-memory
 db, _ := dema.Open("app.db")                                        // file, defaults
 db, _ := dema.Open("app.db", 20, sqlite.OpenReadWrite|sqlite.OpenWAL) // custom
+// With connection hook (PRAGMAs, custom functions):
+db, _ := dema.Open("app.db", func(conn *sqlite.Conn) error {
+    return sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys = ON;", nil)
+})
 db.Close()
 ```
 

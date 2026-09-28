@@ -22,9 +22,35 @@ type DB struct {
 	closed      bool
 }
 
+type ConnPrepareFunc = sqlitex.ConnPrepareFunc
+
+type onConnectionOpt struct {
+	fn sqlitex.ConnPrepareFunc
+}
+
+func OnConnection(fn sqlitex.ConnPrepareFunc) any {
+	return onConnectionOpt{fn: fn}
+}
+
+func chainPrepareConn(prev, next sqlitex.ConnPrepareFunc) sqlitex.ConnPrepareFunc {
+	if next == nil {
+		return prev
+	}
+	if prev == nil {
+		return next
+	}
+	return func(conn *sqlite.Conn) error {
+		if err := prev(conn); err != nil {
+			return err
+		}
+		return next(conn)
+	}
+}
+
 func Open(path string, opts ...any) (*DB, error) {
 	poolSize := 10
 	var openFlags sqlite.OpenFlags
+	var prepareConn sqlitex.ConnPrepareFunc
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
@@ -34,6 +60,12 @@ func Open(path string, opts ...any) (*DB, error) {
 			}
 		case sqlite.OpenFlags:
 			openFlags |= o
+		case sqlitex.ConnPrepareFunc:
+			prepareConn = chainPrepareConn(prepareConn, o)
+		case func(*sqlite.Conn) error:
+			prepareConn = chainPrepareConn(prepareConn, o)
+		case onConnectionOpt:
+			prepareConn = chainPrepareConn(prepareConn, o.fn)
 		}
 	}
 
@@ -50,8 +82,9 @@ func Open(path string, opts ...any) (*DB, error) {
 	}
 
 	pool, err := sqlitex.NewPool(path, sqlitex.PoolOptions{
-		Flags:    openFlags,
-		PoolSize: poolSize,
+		Flags:       openFlags,
+		PoolSize:    poolSize,
+		PrepareConn: prepareConn,
 	})
 	if err != nil {
 		return nil, lumo.WrapError(err).
