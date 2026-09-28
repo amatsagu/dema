@@ -252,7 +252,7 @@ func (tx *Tx) Insert(args ...any) error {
 				}
 				p = rowPtr.UnsafePointer()
 			}
-			return executeInsertSingle(tx.conn, table, p)
+			return executeInsertSingle(tx.conn, table, p, true)
 		}
 	}
 
@@ -281,7 +281,7 @@ func (tx *Tx) Insert(args ...any) error {
 		}
 	}
 
-	return executeInsertRowVals(tx.conn, table, rowVals)
+	return executeInsertRowVals(tx.conn, table, rowVals, true)
 }
 
 func (tx *Tx) Upsert(args ...any) error {
@@ -324,7 +324,7 @@ func (tx *Tx) Upsert(args ...any) error {
 				}
 				p = rowPtr.UnsafePointer()
 			}
-			return executeUpsertSingle(tx.conn, table, p)
+			return executeUpsertSingle(tx.conn, table, p, true)
 		}
 	}
 
@@ -360,7 +360,7 @@ func (tx *Tx) Upsert(args ...any) error {
 		}
 	}
 
-	return executeUpsertRowVals(tx.conn, table, rowVals)
+	return executeUpsertRowVals(tx.conn, table, rowVals, true)
 }
 
 type TxUpdateBuilder[T any] struct {

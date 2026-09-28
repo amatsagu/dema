@@ -125,8 +125,66 @@ func scanColPtr(stmt *sqlite.Stmt, colIdx int, col *colInfo, base unsafe.Pointer
 
 func (t *tableInfo) scanRowDirectPtr(stmt *sqlite.Stmt, base unsafe.Pointer) error {
 	for i, col := range t.allCols {
-		if err := scanColPtr(stmt, i, col, base); err != nil {
-			return err
+		fieldPtr := unsafe.Add(base, col.offset)
+
+		if stmt.ColumnIsNull(i) {
+			if col.isPtr {
+				*(*uintptr)(fieldPtr) = 0
+			}
+			continue
+		}
+
+		if col.isPtr {
+			switch col.elemKind {
+			case reflect.String:
+				s := stmt.ColumnText(i)
+				*(**string)(fieldPtr) = &s
+			case reflect.Int:
+				v := int(stmt.ColumnInt64(i))
+				*(**int)(fieldPtr) = &v
+			case reflect.Int64:
+				v := stmt.ColumnInt64(i)
+				*(**int64)(fieldPtr) = &v
+			case reflect.Uint32:
+				v := uint32(stmt.ColumnInt64(i))
+				*(**uint32)(fieldPtr) = &v
+			case reflect.Bool:
+				v := stmt.ColumnBool(i)
+				*(**bool)(fieldPtr) = &v
+			case reflect.Float64:
+				v := stmt.ColumnFloat(i)
+				*(**float64)(fieldPtr) = &v
+			default:
+				if err := scanColPtr(stmt, i, col, base); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		switch col.kind {
+		case reflect.Int:
+			*(*int)(fieldPtr) = int(stmt.ColumnInt64(i))
+		case reflect.Int64:
+			*(*int64)(fieldPtr) = stmt.ColumnInt64(i)
+		case reflect.Uint32:
+			*(*uint32)(fieldPtr) = uint32(stmt.ColumnInt64(i))
+		case reflect.String:
+			*(*string)(fieldPtr) = stmt.ColumnText(i)
+		case reflect.Bool:
+			*(*bool)(fieldPtr) = stmt.ColumnBool(i)
+		case reflect.Float64:
+			*(*float64)(fieldPtr) = stmt.ColumnFloat(i)
+		case reflect.Int32:
+			*(*int32)(fieldPtr) = int32(stmt.ColumnInt64(i))
+		case reflect.Uint64:
+			*(*uint64)(fieldPtr) = uint64(stmt.ColumnInt64(i))
+		case reflect.Uint:
+			*(*uint)(fieldPtr) = uint(stmt.ColumnInt64(i))
+		default:
+			if err := scanColPtr(stmt, i, col, base); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -137,8 +195,66 @@ func (t *tableInfo) scanRowMappedPtr(stmt *sqlite.Stmt, colMap []*colInfo, base 
 		if col == nil {
 			continue
 		}
-		if err := scanColPtr(stmt, i, col, base); err != nil {
-			return err
+		fieldPtr := unsafe.Add(base, col.offset)
+
+		if stmt.ColumnIsNull(i) {
+			if col.isPtr {
+				*(*uintptr)(fieldPtr) = 0
+			}
+			continue
+		}
+
+		if col.isPtr {
+			switch col.elemKind {
+			case reflect.String:
+				s := stmt.ColumnText(i)
+				*(**string)(fieldPtr) = &s
+			case reflect.Int:
+				v := int(stmt.ColumnInt64(i))
+				*(**int)(fieldPtr) = &v
+			case reflect.Int64:
+				v := stmt.ColumnInt64(i)
+				*(**int64)(fieldPtr) = &v
+			case reflect.Uint32:
+				v := uint32(stmt.ColumnInt64(i))
+				*(**uint32)(fieldPtr) = &v
+			case reflect.Bool:
+				v := stmt.ColumnBool(i)
+				*(**bool)(fieldPtr) = &v
+			case reflect.Float64:
+				v := stmt.ColumnFloat(i)
+				*(**float64)(fieldPtr) = &v
+			default:
+				if err := scanColPtr(stmt, i, col, base); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		switch col.kind {
+		case reflect.Int:
+			*(*int)(fieldPtr) = int(stmt.ColumnInt64(i))
+		case reflect.Int64:
+			*(*int64)(fieldPtr) = stmt.ColumnInt64(i)
+		case reflect.Uint32:
+			*(*uint32)(fieldPtr) = uint32(stmt.ColumnInt64(i))
+		case reflect.String:
+			*(*string)(fieldPtr) = stmt.ColumnText(i)
+		case reflect.Bool:
+			*(*bool)(fieldPtr) = stmt.ColumnBool(i)
+		case reflect.Float64:
+			*(*float64)(fieldPtr) = stmt.ColumnFloat(i)
+		case reflect.Int32:
+			*(*int32)(fieldPtr) = int32(stmt.ColumnInt64(i))
+		case reflect.Uint64:
+			*(*uint64)(fieldPtr) = uint64(stmt.ColumnInt64(i))
+		case reflect.Uint:
+			*(*uint)(fieldPtr) = uint(stmt.ColumnInt64(i))
+		default:
+			if err := scanColPtr(stmt, i, col, base); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

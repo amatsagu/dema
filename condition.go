@@ -15,15 +15,16 @@ func encodeValue(v any) any {
 	if v == nil {
 		return nil
 	}
-	if enc, ok := v.(FieldEncoder); ok {
-		encoded, err := enc.EncodeDema()
-		if err == nil {
-			return encoded
-		}
-	}
 	switch val := v.(type) {
+	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8, string, bool, float64, float32:
+		return v
 	case []rune:
 		return string(val)
+	case FieldEncoder:
+		if encoded, err := val.EncodeDema(); err == nil {
+			return encoded
+		}
+		return v
 	default:
 		return v
 	}

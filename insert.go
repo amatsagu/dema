@@ -43,19 +43,31 @@ func (db *DB) Insert(args ...any) error {
 		return nil
 	}
 	ctx := context.Background()
+	cache := true
 	var row any
-	if len(args) == 1 {
-		row = args[0]
-	} else if len(args) == 2 {
-		if c, ok := args[0].(context.Context); ok {
-			if c != nil {
-				ctx = c
+	singleCandidate := true
+	for _, arg := range args {
+		if arg == nil {
+			continue
+		}
+		switch a := arg.(type) {
+		case context.Context:
+			if a != nil {
+				ctx = a
 			}
-			row = args[1]
+		case bool:
+			cache = a
+		default:
+			if row == nil && singleCandidate {
+				row = arg
+			} else {
+				singleCandidate = false
+				row = nil
+			}
 		}
 	}
 
-	if row != nil {
+	if row != nil && singleCandidate {
 		if p, typ, ok := extractSingleRow(row); ok {
 			table, err := db.getTableInfo(typ)
 			if err != nil {
@@ -80,14 +92,16 @@ func (db *DB) Insert(args ...any) error {
 					Include("dema_expected", "connection from pool")
 			}
 			defer db.pool.Put(conn)
-			return executeInsertSingle(conn, table, p)
+			return executeInsertSingle(conn, table, p, cache)
 		}
 	}
 
-	ctx, rowVals, err := parseContextAndRows(args)
+	parsedCtx, parsedCache, rowVals, err := parseContextCacheAndRows(args)
 	if err != nil || len(rowVals) == 0 {
 		return err
 	}
+	ctx = parsedCtx
+	cache = parsedCache
 
 	typ := rowVals[0].Type()
 	table, err := db.getTableInfo(typ)
@@ -118,20 +132,14 @@ func (db *DB) Insert(args ...any) error {
 	}
 	defer db.pool.Put(conn)
 
-	return executeInsertRowVals(conn, table, rowVals)
+	return executeInsertRowVals(conn, table, rowVals, cache)
 }
 
-func parseContextAndRows(args []any) (context.Context, []reflect.Value, error) {
+func parseContextCacheAndRows(args []any) (context.Context, bool, []reflect.Value, error) {
 	ctx := context.Background()
-	if len(args) > 0 {
-		if c, ok := args[0].(context.Context); ok && c != nil {
-			ctx = c
-			args = args[1:]
-		}
-	}
-
+	cache := true
 	if len(args) == 0 {
-		return ctx, nil, nil
+		return ctx, cache, nil, nil
 	}
 
 	var rowVals []reflect.Value
@@ -139,31 +147,45 @@ func parseContextAndRows(args []any) (context.Context, []reflect.Value, error) {
 		if arg == nil {
 			continue
 		}
-		v := reflect.ValueOf(arg)
-		if v.Kind() == reflect.Slice {
-			for j := 0; j < v.Len(); j++ {
-				elem := v.Index(j)
-				if elem.Kind() == reflect.Pointer {
-					elem = elem.Elem()
-				}
-				if elem.Kind() == reflect.Struct {
-					rowVals = append(rowVals, elem)
-				}
+		switch a := arg.(type) {
+		case context.Context:
+			if a != nil {
+				ctx = a
 			}
-		} else {
-			if v.Kind() == reflect.Pointer {
-				v = v.Elem()
-			}
-			if v.Kind() == reflect.Struct {
-				rowVals = append(rowVals, v)
+		case bool:
+			cache = a
+		default:
+			v := reflect.ValueOf(arg)
+			if v.Kind() == reflect.Slice {
+				for j := 0; j < v.Len(); j++ {
+					elem := v.Index(j)
+					if elem.Kind() == reflect.Pointer {
+						elem = elem.Elem()
+					}
+					if elem.Kind() == reflect.Struct {
+						rowVals = append(rowVals, elem)
+					}
+				}
+			} else {
+				if v.Kind() == reflect.Pointer {
+					v = v.Elem()
+				}
+				if v.Kind() == reflect.Struct {
+					rowVals = append(rowVals, v)
+				}
 			}
 		}
 	}
 
-	return ctx, rowVals, nil
+	return ctx, cache, rowVals, nil
 }
 
-func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer) error {
+func parseContextAndRows(args []any) (context.Context, []reflect.Value, error) {
+	ctx, _, rows, err := parseContextCacheAndRows(args)
+	return ctx, rows, err
+}
+
+func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, cache bool) error {
 	mask := table.getNonZeroColMask(p)
 	sql, cols := table.getInsertPlan(mask)
 
@@ -182,7 +204,13 @@ func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer) 
 		opts.Args = append(opts.Args, encodeValue(val))
 	}
 
-	if err := sqlitex.Execute(conn, sql, opts); err != nil {
+	var err error
+	if cache {
+		err = sqlitex.Execute(conn, sql, opts)
+	} else {
+		err = sqlitex.ExecuteTransient(conn, sql, opts)
+	}
+	if err != nil {
 		return lumo.WrapError(err).
 			Include("dema_table", table.name).
 			Include("dema_operation", "INSERT").
@@ -191,7 +219,7 @@ func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer) 
 	return nil
 }
 
-func executeInsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Value) error {
+func executeInsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Value, cache bool) error {
 	for i := range rows {
 		rowVal := rows[i]
 		if !rowVal.CanAddr() {
@@ -200,7 +228,7 @@ func executeInsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Va
 			rowVal = addr
 		}
 		p := rowVal.Addr().UnsafePointer()
-		if err := executeInsertSingle(conn, table, p); err != nil {
+		if err := executeInsertSingle(conn, table, p, cache); err != nil {
 			return err
 		}
 	}
@@ -213,19 +241,31 @@ func (db *DB) Upsert(args ...any) error {
 		return nil
 	}
 	ctx := context.Background()
+	cache := true
 	var row any
-	if len(args) == 1 {
-		row = args[0]
-	} else if len(args) == 2 {
-		if c, ok := args[0].(context.Context); ok {
-			if c != nil {
-				ctx = c
+	singleCandidate := true
+	for _, arg := range args {
+		if arg == nil {
+			continue
+		}
+		switch a := arg.(type) {
+		case context.Context:
+			if a != nil {
+				ctx = a
 			}
-			row = args[1]
+		case bool:
+			cache = a
+		default:
+			if row == nil && singleCandidate {
+				row = arg
+			} else {
+				singleCandidate = false
+				row = nil
+			}
 		}
 	}
 
-	if row != nil {
+	if row != nil && singleCandidate {
 		if p, typ, ok := extractSingleRow(row); ok {
 			table, err := db.getTableInfo(typ)
 			if err != nil {
@@ -256,14 +296,16 @@ func (db *DB) Upsert(args ...any) error {
 					Include("dema_expected", "connection from pool")
 			}
 			defer db.pool.Put(conn)
-			return executeUpsertSingle(conn, table, p)
+			return executeUpsertSingle(conn, table, p, cache)
 		}
 	}
 
-	ctx, rowVals, err := parseContextAndRows(args)
+	parsedCtx, parsedCache, rowVals, err := parseContextCacheAndRows(args)
 	if err != nil || len(rowVals) == 0 {
 		return err
 	}
+	ctx = parsedCtx
+	cache = parsedCache
 
 	typ := rowVals[0].Type()
 	table, err := db.getTableInfo(typ)
@@ -301,10 +343,10 @@ func (db *DB) Upsert(args ...any) error {
 	}
 	defer db.pool.Put(conn)
 
-	return executeUpsertRowVals(conn, table, rowVals)
+	return executeUpsertRowVals(conn, table, rowVals, cache)
 }
 
-func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer) error {
+func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, cache bool) error {
 	mask := table.getNonZeroColMask(p)
 	sql, cols := table.getUpsertPlan(mask)
 	if len(cols) == 0 {
@@ -326,7 +368,13 @@ func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer) 
 		opts.Args = append(opts.Args, encodeValue(val))
 	}
 
-	if err := sqlitex.Execute(conn, sql, opts); err != nil {
+	var err error
+	if cache {
+		err = sqlitex.Execute(conn, sql, opts)
+	} else {
+		err = sqlitex.ExecuteTransient(conn, sql, opts)
+	}
+	if err != nil {
 		return lumo.WrapError(err).
 			Include("dema_table", table.name).
 			Include("dema_operation", "UPSERT").
@@ -335,7 +383,7 @@ func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer) 
 	return nil
 }
 
-func executeUpsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Value) error {
+func executeUpsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Value, cache bool) error {
 	for i := range rows {
 		rowVal := rows[i]
 		if !rowVal.CanAddr() {
@@ -344,7 +392,7 @@ func executeUpsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Va
 			rowVal = addr
 		}
 		p := rowVal.Addr().UnsafePointer()
-		if err := executeUpsertSingle(conn, table, p); err != nil {
+		if err := executeUpsertSingle(conn, table, p, cache); err != nil {
 			return err
 		}
 	}
