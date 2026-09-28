@@ -33,7 +33,7 @@ func (db *DB) Update[T any](rows ...T) UpdateBuilder[T] {
 	typ, _ := getModelType[T]()
 	var table *tableInfo
 	if typ != nil {
-		table, _ = db.getTableInfo(typ)
+		table = db.tableInfo(typ)
 	}
 	b := UpdateBuilder[T]{
 		db:    db,
@@ -152,7 +152,6 @@ func (b UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, c
 	}
 
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	if eq, ok := b.cond.(fastEqualCondition); ok && b.numSets <= 2 {
@@ -162,16 +161,24 @@ func (b UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, c
 				opts.Args = append(opts.Args, encodeValue(b.set1.val))
 			}
 			opts.Args = append(opts.Args, eq.equalArg())
+			var err error
 			if cache {
-				return sqlitex.Execute(conn, sql, opts)
+				err = sqlitex.Execute(conn, sql, opts)
+			} else {
+				err = sqlitex.ExecuteTransient(conn, sql, opts)
 			}
-			return sqlitex.ExecuteTransient(conn, sql, opts)
+			putExecOptions(opts)
+			if err != nil {
+				return lumo.WrapError(err).
+					Include("dema_table", table.name).
+					Include("dema_operation", "UPDATE").
+					Include("dema_expected", "successful execution")
+			}
+			return nil
 		}
 	}
 
 	qb := getQueryBuffer()
-	defer putQueryBuffer(qb)
-
 	qb.WriteString(`UPDATE "`)
 	qb.WriteString(table.name)
 	qb.WriteString(`" SET `)
@@ -206,6 +213,7 @@ func (b UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, c
 	qb.WriteString(";")
 
 	querySQL := table.getUpdateSQL(qb)
+	putQueryBuffer(qb)
 
 	var err error
 	if cache {
@@ -213,6 +221,7 @@ func (b UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, c
 	} else {
 		err = sqlitex.ExecuteTransient(conn, querySQL, opts)
 	}
+	putExecOptions(opts)
 
 	if err != nil {
 		return lumo.WrapError(err).
@@ -364,12 +373,12 @@ func executeUpdateRowSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointe
 	}
 
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	for _, col := range cols {
 		val, _, err := col.extractValue(p)
 		if err != nil {
+			putExecOptions(opts)
 			return lumo.WrapError(err).
 				Include("dema_table", table.name).
 				Include("dema_operation", "UPDATE").
@@ -384,6 +393,7 @@ func executeUpdateRowSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointe
 	} else {
 		err = sqlitex.ExecuteTransient(conn, sql, opts)
 	}
+	putExecOptions(opts)
 
 	if err != nil {
 		return lumo.WrapError(err).

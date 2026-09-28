@@ -191,12 +191,12 @@ func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, 
 	sql, cols := table.getInsertPlan(mask)
 
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	for _, col := range cols {
 		val, _, err := col.extractValue(p)
 		if err != nil {
+			putExecOptions(opts)
 			return lumo.WrapError(err).
 				Include("dema_table", table.name).
 				Include("dema_operation", "INSERT").
@@ -211,6 +211,7 @@ func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, 
 	} else {
 		err = sqlitex.ExecuteTransient(conn, sql, opts)
 	}
+	putExecOptions(opts)
 	if err != nil {
 		return lumo.WrapError(err).
 			Include("dema_table", table.name).
@@ -356,12 +357,12 @@ func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, 
 	}
 
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	for _, col := range cols {
 		val, _, err := col.extractValue(p)
 		if err != nil {
+			putExecOptions(opts)
 			return lumo.WrapError(err).
 				Include("dema_table", table.name).
 				Include("dema_operation", "UPSERT").
@@ -376,6 +377,7 @@ func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, 
 	} else {
 		err = sqlitex.ExecuteTransient(conn, sql, opts)
 	}
+	putExecOptions(opts)
 	if err != nil {
 		return lumo.WrapError(err).
 			Include("dema_table", table.name).

@@ -35,7 +35,7 @@ func (db *DB) Select[T any]() SelectBuilder[T] {
 	typ, isPtr := getModelType[T]()
 	var table *tableInfo
 	if typ != nil {
-		table, _ = db.getTableInfo(typ)
+		table = db.tableInfo(typ)
 	}
 	return SelectBuilder[T]{
 		db:         db,
@@ -149,7 +149,7 @@ func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) 
 		qb.WriteInt(b.offset)
 	}
 
-	return table.getSelectSQL(qb)
+	return table.getSelectSQL(qb.buf)
 }
 
 func (b SelectBuilder[T]) Run(args ...any) ([]T, error) {
@@ -185,19 +185,18 @@ func (b SelectBuilder[T]) run(args []any) ([]T, error) {
 	}
 
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	querySQL := b.buildSQL(table, opts)
 
 	conn, err := b.db.pool.Take(ctx)
 	if err != nil {
+		putExecOptions(opts)
 		return nil, lumo.WrapError(err).
 			Include("dema_table", table.name).
 			Include("dema_operation", "SELECT").
 			Include("dema_expected", "connection from pool")
 	}
-	defer b.db.pool.Put(conn)
 
 	if b.hasLim && b.limit == 1 && !isPtrModel {
 		results := make([]T, 1)
@@ -214,6 +213,9 @@ func (b SelectBuilder[T]) run(args []any) ([]T, error) {
 		} else {
 			err = sqlitex.ExecuteTransient(conn, querySQL, opts)
 		}
+		found := len(opts.Args) > initialArgsLen
+		putExecOptions(opts)
+		b.db.pool.Put(conn)
 
 		if err != nil {
 			return nil, lumo.WrapError(err).
@@ -222,7 +224,7 @@ func (b SelectBuilder[T]) run(args []any) ([]T, error) {
 				Include("dema_expected", "successful execution")
 		}
 
-		if len(opts.Args) == initialArgsLen {
+		if !found {
 			return results[:0], nil
 		}
 		return results, nil
@@ -270,6 +272,8 @@ func (b SelectBuilder[T]) run(args []any) ([]T, error) {
 	} else {
 		err = sqlitex.ExecuteTransient(conn, querySQL, opts)
 	}
+	putExecOptions(opts)
+	b.db.pool.Put(conn)
 
 	if err != nil {
 		return nil, lumo.WrapError(err).

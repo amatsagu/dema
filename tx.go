@@ -147,15 +147,19 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 		cache = cacheOpt[0]
 	}
 
-	typ, isPtrModel := getModelType[T]()
-
-	table, err := b.tx.db.getTableInfo(typ)
-	if err != nil {
-		return nil, err
+	table := b.builder.table
+	isPtrModel := b.builder.isPtrModel
+	if table == nil {
+		typ, isPtr := getModelType[T]()
+		isPtrModel = isPtr
+		var err error
+		table, err = b.tx.db.getTableInfo(typ)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	querySQL := b.builder.buildSQL(table, opts)
@@ -175,6 +179,8 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 		} else {
 			err = sqlitex.ExecuteTransient(b.tx.conn, querySQL, opts)
 		}
+		found := len(opts.Args) > initialArgsLen
+		putExecOptions(opts)
 
 		if err != nil {
 			return nil, lumo.WrapError(err).
@@ -183,7 +189,7 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 				Include("dema_expected", "successful execution")
 		}
 
-		if len(opts.Args) == initialArgsLen {
+		if !found {
 			return results[:0], nil
 		}
 		return results, nil
@@ -226,11 +232,13 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 		}
 	}
 
+	var err error
 	if cache {
 		err = sqlitex.Execute(b.tx.conn, querySQL, opts)
 	} else {
 		err = sqlitex.ExecuteTransient(b.tx.conn, querySQL, opts)
 	}
+	putExecOptions(opts)
 
 	if err != nil {
 		return nil, lumo.WrapError(err).

@@ -368,6 +368,11 @@ func (t *tableInfo) getInsertPlan(mask uint64) (string, []*colInfo) {
 		}
 	}
 
+	return t.buildInsertPlanSlow(mask)
+}
+
+//go:noinline
+func (t *tableInfo) buildInsertPlanSlow(mask uint64) (string, []*colInfo) {
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
 	p := t.insertPlans.Load()
@@ -434,6 +439,11 @@ func (t *tableInfo) getUpsertPlan(mask uint64) (string, []*colInfo) {
 		}
 	}
 
+	return t.buildUpsertPlanSlow(mask)
+}
+
+//go:noinline
+func (t *tableInfo) buildUpsertPlanSlow(mask uint64) (string, []*colInfo) {
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
 	p := t.upsertPlans.Load()
@@ -533,6 +543,11 @@ func (t *tableInfo) getUpdateRowPlan(mask uint64) (string, []*colInfo) {
 		}
 	}
 
+	return t.buildUpdateRowPlanSlow(mask)
+}
+
+//go:noinline
+func (t *tableInfo) buildUpdateRowPlanSlow(mask uint64) (string, []*colInfo) {
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
 	p := t.updateRowPlans.Load()
@@ -592,14 +607,22 @@ func (t *tableInfo) getUpdateRowPlan(mask uint64) (string, []*colInfo) {
 	return sql, fullCols
 }
 
-func (t *tableInfo) getSelectSQL(qb *queryBuffer) string {
-	b := qb.buf
+func (t *tableInfo) cachedSelectSQL(b []byte) string {
 	if p := t.selectCache.Load(); p != nil {
-		if sql, ok := (*p)[string(b)]; ok {
-			return sql
-		}
+		return (*p)[string(b)]
 	}
+	return ""
+}
 
+func (t *tableInfo) getSelectSQL(b []byte) string {
+	if sql := t.cachedSelectSQL(b); sql != "" {
+		return sql
+	}
+	return t.buildSelectSQLSlow(b)
+}
+
+//go:noinline
+func (t *tableInfo) buildSelectSQLSlow(b []byte) string {
 	key := string(b)
 	t.selectMu.Lock()
 	defer t.selectMu.Unlock()
@@ -621,13 +644,16 @@ func (t *tableInfo) getSelectSQL(qb *queryBuffer) string {
 }
 
 func (t *tableInfo) getUpdateSQL(qb *queryBuffer) string {
-	b := qb.buf
 	if p := t.updateSQLCache.Load(); p != nil {
-		if sql, ok := (*p)[string(b)]; ok {
+		if sql := (*p)[string(qb.buf)]; sql != "" {
 			return sql
 		}
 	}
+	return t.buildUpdateSQLSlow(qb.buf)
+}
 
+//go:noinline
+func (t *tableInfo) buildUpdateSQLSlow(b []byte) string {
 	key := string(b)
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
@@ -676,6 +702,11 @@ func (t *tableInfo) getFastUpdateEqualSQL(numSets uint8, col0Name, col1Name, eqC
 		}
 	}
 
+	return t.buildFastUpdateEqualSlow(key, col0Name, col1Name, eqColName, numSets)
+}
+
+//go:noinline
+func (t *tableInfo) buildFastUpdateEqualSlow(key uint32, col0Name, col1Name, eqColName string, numSets uint8) string {
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
 	p := t.fastUpdatePlans.Load()

@@ -24,6 +24,16 @@ var (
 )
 
 func encodeValue(v any) any {
+	switch v.(type) {
+	case int, int64, string, uint, uint64, int32, uint32:
+		return v
+	default:
+		return encodeOtherValue(v)
+	}
+}
+
+//go:noinline
+func encodeOtherValue(v any) any {
 	if v == nil {
 		return nil
 	}
@@ -33,7 +43,7 @@ func encodeValue(v any) any {
 			return boxedTrue
 		}
 		return boxedFalse
-	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8, string, float64, float32:
+	case int16, int8, uint16, uint8, float64, float32:
 		return v
 	case []rune:
 		return string(val)

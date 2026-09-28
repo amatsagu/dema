@@ -116,15 +116,26 @@ func (db *DB) Table[T any](name string, onInsert, onUpdate, onDelete func(*T) er
 	db.tablesValue.Store(&newMap)
 }
 
-func (db *DB) getTableInfo(typ reflect.Type) (*tableInfo, error) {
+func (db *DB) tableInfo(typ reflect.Type) *tableInfo {
 	if p := db.tablesValue.Load(); p != nil {
-		if info, ok := (*p)[typ]; ok {
-			return info, nil
-		}
+		return (*p)[typ]
 	}
+	return nil
+}
 
-	return nil, lumo.WrapString("table for type %s is not registered", typ.String()).
+func (db *DB) getTableInfo(typ reflect.Type) (*tableInfo, error) {
+	if info := db.tableInfo(typ); info != nil {
+		return info, nil
+	}
+	return nil, tableNotFoundError(typ)
+}
+
+//go:noinline
+func tableNotFoundError(typ reflect.Type) error {
+	return lumo.WrapString("table for type %s is not registered", typ.String()).
 		Include("dema_table", "").
 		Include("dema_operation", "LOOKUP").
 		Include("dema_expected", "registered table")
 }
+
+

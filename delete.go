@@ -18,7 +18,7 @@ func (db *DB) Delete[T any]() *DeleteBuilder[T] {
 	typ, _ := getModelType[T]()
 	var table *tableInfo
 	if typ != nil {
-		table, _ = db.getTableInfo(typ)
+		table = db.tableInfo(typ)
 	}
 	return &DeleteBuilder[T]{
 		db:    db,
@@ -87,12 +87,9 @@ func (b *DeleteBuilder[T]) Run(args ...any) error {
 
 func (b *DeleteBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, cache bool) error {
 	opts := getExecOptions()
-	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	qb := getQueryBuffer()
-	defer putQueryBuffer(qb)
-
 	qb.WriteString(`DELETE FROM "`)
 	qb.WriteString(table.name)
 	qb.WriteString(`" WHERE `)
@@ -101,6 +98,7 @@ func (b *DeleteBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, 
 	qb.WriteString(`;`)
 
 	querySQL := table.getUpdateSQL(qb)
+	putQueryBuffer(qb)
 
 	var err error
 	if cache {
@@ -108,6 +106,7 @@ func (b *DeleteBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, 
 	} else {
 		err = sqlitex.ExecuteTransient(conn, querySQL, opts)
 	}
+	putExecOptions(opts)
 
 	if err != nil {
 		return lumo.WrapError(err).
