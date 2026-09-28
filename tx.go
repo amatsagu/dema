@@ -137,14 +137,9 @@ func (b *TxSelectBuilder[T]) Page(current, size int) *TxSelectBuilder[T] {
 	return b
 }
 
-func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
+func (b *TxSelectBuilder[T]) Run(cache bool) ([]T, error) {
 	if err := b.tx.checkActive(); err != nil {
 		return nil, err
-	}
-
-	cache := true
-	if len(cacheOpt) > 0 {
-		cache = cacheOpt[0]
 	}
 
 	table := b.builder.table
@@ -422,14 +417,9 @@ func (b *TxUpdateBuilder[T]) Row(row T) *TxUpdateBuilder[T] {
 	return b
 }
 
-func (b *TxUpdateBuilder[T]) Run(cacheOpt ...bool) error {
+func (b *TxUpdateBuilder[T]) Run(cache bool) error {
 	if err := b.tx.checkActive(); err != nil {
 		return err
-	}
-
-	cache := true
-	if len(cacheOpt) > 0 {
-		cache = cacheOpt[0]
 	}
 
 	table := b.builder.table
@@ -539,14 +529,9 @@ func (b *TxDeleteBuilder[T]) Where(cond Condition) *TxDeleteBuilder[T] {
 	return b
 }
 
-func (b *TxDeleteBuilder[T]) Run(cacheOpt ...bool) error {
+func (b *TxDeleteBuilder[T]) Run(cache bool) error {
 	if err := b.tx.checkActive(); err != nil {
 		return err
-	}
-
-	cache := true
-	if len(cacheOpt) > 0 {
-		cache = cacheOpt[0]
 	}
 
 	typ, _ := getModelType[T]()

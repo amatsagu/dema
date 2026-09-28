@@ -37,7 +37,7 @@ func extractSingleRow(arg any) (unsafe.Pointer, reflect.Type, bool) {
 	return nil, nil, false
 }
 
-// Insert inserts one or more model rows into the database.
+// Persists one or more model rows into the database.
 func (db *DB) Insert(args ...any) error {
 	if len(args) == 0 {
 		return nil
@@ -237,7 +237,7 @@ func executeInsertRowVals(conn *sqlite.Conn, table *tableInfo, rows []reflect.Va
 	return nil
 }
 
-// Upsert inserts rows or updates non-primary-key fields on conflict with primary keys.
+// Persists rows or updates non-primary-key fields on conflict with primary keys.
 func (db *DB) Upsert(args ...any) error {
 	if len(args) == 0 {
 		return nil

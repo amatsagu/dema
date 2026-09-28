@@ -11,7 +11,7 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-// RawQuery executes a raw SQL query and scans results into a slice of model struct T.
+// Executes a raw SQL query and scans results into a slice of model struct T.
 func (db *DB) RawQuery[T any](ctx context.Context, sql string, cache bool, args ...any) ([]T, error) {
 	typ, _ := getModelType[T]()
 	table, err := db.getTableInfo(typ)
@@ -94,7 +94,7 @@ func executeRawQuery[T any](conn *sqlite.Conn, table *tableInfo, sql string, cac
 	return results, nil
 }
 
-// RawExecute executes a raw SQL statement without result scanning.
+// Executes a raw SQL statement without result scanning.
 func (db *DB) RawExecute(ctx context.Context, sql string, cache bool, args ...any) error {
 	conn, err := db.pool.Take(ctx)
 	if err != nil {

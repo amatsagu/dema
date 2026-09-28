@@ -75,18 +75,7 @@ func (b UpdateBuilder[T]) Row(row T) UpdateBuilder[T] {
 	return b
 }
 
-func (b UpdateBuilder[T]) Run(args ...any) error {
-	var ctx context.Context
-	cache := true
-
-	for _, arg := range args {
-		switch a := arg.(type) {
-		case context.Context:
-			ctx = a
-		case bool:
-			cache = a
-		}
-	}
+func (b UpdateBuilder[T]) Run(ctx context.Context, cache bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}

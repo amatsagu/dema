@@ -201,7 +201,7 @@ func TestCancelledContextOnPoolOperations(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := db.Select[User]().Run(cancelledCtx); err == nil {
+	if _, err := db.Select[User]().Run(cancelledCtx, true); err == nil {
 		t.Fatalf("expected error on cancelled ctx in Select")
 	}
 	if err := db.Insert(cancelledCtx, User{ID: 1}); err == nil {
@@ -210,13 +210,13 @@ func TestCancelledContextOnPoolOperations(t *testing.T) {
 	if err := db.Upsert(cancelledCtx, User{ID: 1}); err == nil {
 		t.Fatalf("expected error on cancelled ctx in Upsert")
 	}
-	if err := db.Update[User]().Set(UserField.Name, "X").Where(Equal(UserField.ID, 1)).Run(cancelledCtx); err == nil {
+	if err := db.Update[User]().Set(UserField.Name, "X").Where(Equal(UserField.ID, 1)).Run(cancelledCtx, true); err == nil {
 		t.Fatalf("expected error on cancelled ctx in Update.Run")
 	}
 	if err := db.UpdateRow(cancelledCtx, User{ID: 1, Name: "X"}); err == nil {
 		t.Fatalf("expected error on cancelled ctx in UpdateRow")
 	}
-	if err := db.Delete[User]().Where(Equal(UserField.ID, 1)).Run(cancelledCtx); err == nil {
+	if err := db.Delete[User]().Where(Equal(UserField.ID, 1)).Run(cancelledCtx, true); err == nil {
 		t.Fatalf("expected error on cancelled ctx in Delete.Run")
 	}
 	if _, err := db.RawQuery[User](cancelledCtx, "SELECT 1;", false); err == nil {
@@ -316,7 +316,7 @@ func TestCustomEncodersAndDecoders(t *testing.T) {
 	db.Table[FailDecModel]("fail_dec", nil, nil, nil)
 	_ = db.RawExecute(ctx, "INSERT INTO fail_dec (id, data) VALUES (1, 'test');", false)
 
-	if _, err := db.Select[FailDecModel]().Run(ctx); err == nil {
+	if _, err := db.Select[FailDecModel]().Run(ctx, true); err == nil {
 		t.Fatalf("expected Select to fail with failing decoder")
 	}
 	if _, err := db.RawQuery[FailDecModel](ctx, "SELECT id, data FROM fail_dec;", false); err == nil {
@@ -327,7 +327,7 @@ func TestCustomEncodersAndDecoders(t *testing.T) {
 	db.Table[ValueDecModel]("val_dec", nil, nil, nil)
 	_ = db.RawExecute(ctx, "INSERT INTO val_dec (id, data) VALUES (1, 'val');", false)
 
-	vRows, err := db.Select[ValueDecModel]().Run(ctx)
+	vRows, err := db.Select[ValueDecModel]().Run(ctx, true)
 	if err != nil || len(vRows) != 1 {
 		t.Fatalf("Select with ValueDec failed: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 	}
 
 	type UnregisteredTx struct{ ID int }
-	if _, err := tx.Select[UnregisteredTx]().Run(); err == nil {
+	if _, err := tx.Select[UnregisteredTx]().Run(true); err == nil {
 		t.Fatalf("expected error on tx.Select unregistered")
 	}
 	if err := tx.Insert(UnregisteredTx{ID: 1}); err == nil {
@@ -456,13 +456,13 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 	if err := tx.Upsert(UnregisteredTx{ID: 1}); err == nil {
 		t.Fatalf("expected error on tx.Upsert unregistered")
 	}
-	if err := tx.Update[UnregisteredTx]().Set(NewField[UnregisteredTx, int]("id"), 1).Where(Equal(NewField[UnregisteredTx, int]("id"), 1)).Run(); err == nil {
+	if err := tx.Update[UnregisteredTx]().Set(NewField[UnregisteredTx, int]("id"), 1).Where(Equal(NewField[UnregisteredTx, int]("id"), 1)).Run(true); err == nil {
 		t.Fatalf("expected error on tx.Update unregistered")
 	}
 	if err := tx.UpdateRow(UnregisteredTx{ID: 1}); err == nil {
 		t.Fatalf("expected error on tx.UpdateRow unregistered")
 	}
-	if err := tx.Delete[UnregisteredTx]().Where(Equal(NewField[UnregisteredTx, int]("id"), 1)).Run(); err == nil {
+	if err := tx.Delete[UnregisteredTx]().Where(Equal(NewField[UnregisteredTx, int]("id"), 1)).Run(true); err == nil {
 		t.Fatalf("expected error on tx.Delete unregistered")
 	}
 	if _, err := tx.RawQuery[UnregisteredTx]("SELECT 1;", false); err == nil {
@@ -489,7 +489,7 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 		t.Fatalf("tx.UpdateRow modify failed: %v", err)
 	}
 
-	txRows, err := tx.Select[HookTxModel]().Where(Equal(NewField[HookTxModel, int]("id"), 100)).Run()
+	txRows, err := tx.Select[HookTxModel]().Where(Equal(NewField[HookTxModel, int]("id"), 100)).Run(true)
 	if err != nil || len(txRows) != 1 || txRows[0].Name != "modified_by_hook" {
 		t.Fatalf("expected row name modified_by_hook, got %+v", txRows)
 	}
@@ -503,7 +503,7 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 	}
 	cancel()
 
-	if _, err := tx2.Select[HookTxModel]().Run(); err == nil {
+	if _, err := tx2.Select[HookTxModel]().Run(true); err == nil {
 		t.Fatalf("expected error on cancelled tx2.Select")
 	}
 	if err := tx2.Insert(HookTxModel{ID: 1}); err == nil {
@@ -512,13 +512,13 @@ func TestTransactionComprehensiveBranches(t *testing.T) {
 	if err := tx2.Upsert(HookTxModel{ID: 1}); err == nil {
 		t.Fatalf("expected error on cancelled tx2.Upsert")
 	}
-	if err := tx2.Update[HookTxModel]().Set(NewField[HookTxModel, string]("name"), "x").Where(Equal(NewField[HookTxModel, int]("id"), 1)).Run(); err == nil {
+	if err := tx2.Update[HookTxModel]().Set(NewField[HookTxModel, string]("name"), "x").Where(Equal(NewField[HookTxModel, int]("id"), 1)).Run(true); err == nil {
 		t.Fatalf("expected error on cancelled tx2.Update")
 	}
 	if err := tx2.UpdateRow(HookTxModel{ID: 1, Name: "x"}); err == nil {
 		t.Fatalf("expected error on cancelled tx2.UpdateRow")
 	}
-	if err := tx2.Delete[HookTxModel]().Where(Equal(NewField[HookTxModel, int]("id"), 1)).Run(); err == nil {
+	if err := tx2.Delete[HookTxModel]().Where(Equal(NewField[HookTxModel, int]("id"), 1)).Run(true); err == nil {
 		t.Fatalf("expected error on cancelled tx2.Delete")
 	}
 	if _, err := tx2.RawQuery[HookTxModel]("SELECT 1;", false); err == nil {
@@ -556,19 +556,19 @@ func TestBuilderHookErrors(t *testing.T) {
 	db.Table("hook_builder", nil, onUpdateFail, onDeleteFail)
 
 	ub := db.Update[HookBuilderModel]().Row(HookBuilderModel{ID: 1, Name: "A"})
-	if err := ub.Run(); err == nil {
+	if err := ub.Run(ctx, true); err == nil {
 		t.Fatalf("expected UpdateBuilder.Row to fail on onUpdate hook")
 	}
 
 	ubSet := db.Update[HookBuilderModel]().
 		Set(NewField[HookBuilderModel, string]("name"), "B").
 		Where(Equal(NewField[HookBuilderModel, int]("id"), 1))
-	if err := ubSet.Run(); err == nil {
+	if err := ubSet.Run(ctx, true); err == nil {
 		t.Fatalf("expected UpdateBuilder.Set to fail on onUpdate hook")
 	}
 
 	delB := db.Delete[HookBuilderModel]().Where(Equal(NewField[HookBuilderModel, int]("id"), 1))
-	if err := delB.Run(); err == nil {
+	if err := delB.Run(ctx, true); err == nil {
 		t.Fatalf("expected DeleteBuilder to fail on onDelete hook")
 	}
 
@@ -578,10 +578,10 @@ func TestBuilderHookErrors(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	if err := tx.Update[HookBuilderModel]().Row(HookBuilderModel{ID: 1, Name: "A"}).Run(); err == nil {
+	if err := tx.Update[HookBuilderModel]().Row(HookBuilderModel{ID: 1, Name: "A"}).Run(true); err == nil {
 		t.Fatalf("expected tx.Update.Row to fail on onUpdate hook")
 	}
-	if err := tx.Delete[HookBuilderModel]().Where(Equal(NewField[HookBuilderModel, int]("id"), 1)).Run(); err == nil {
+	if err := tx.Delete[HookBuilderModel]().Where(Equal(NewField[HookBuilderModel, int]("id"), 1)).Run(true); err == nil {
 		t.Fatalf("expected tx.Delete to fail on onDelete hook")
 	}
 }
@@ -626,7 +626,7 @@ func TestMoreRemainingBranches(t *testing.T) {
 	if err := db.Upsert(UpsertHookModel{ID: 10, Name: "orig"}); err != nil {
 		t.Fatalf("Upsert with hook failed: %v", err)
 	}
-	gotUpsert, err := db.Select[UpsertHookModel]().Where(Equal(NewField[UpsertHookModel, int]("id"), 10)).Run()
+	gotUpsert, err := db.Select[UpsertHookModel]().Where(Equal(NewField[UpsertHookModel, int]("id"), 10)).Run(ctx, true)
 	if err != nil || len(gotUpsert) != 1 || gotUpsert[0].Name != "mutated_upsert" {
 		t.Fatalf("expected mutated name, got %+v", gotUpsert)
 	}
@@ -649,7 +649,7 @@ func TestMoreRemainingBranches(t *testing.T) {
 	_ = db.Insert(UpdateRowArgModel{ID: 1, Name: "Initial"})
 
 	uArgBuilder := db.Update(UpdateRowArgModel{ID: 1, Name: "UpdatedViaArg"})
-	if err := uArgBuilder.Run(); err != nil {
+	if err := uArgBuilder.Run(ctx, true); err != nil {
 		t.Fatalf("Update(row).Run() failed: %v", err)
 	}
 
@@ -670,7 +670,7 @@ func TestMoreRemainingBranches(t *testing.T) {
 	if err := db.UpdateRow(UpdateMutateModel{ID: 1, Name: "orig"}); err != nil {
 		t.Fatalf("UpdateRow with mutating hook failed: %v", err)
 	}
-	gotMutated, err := db.Select[UpdateMutateModel]().Where(Equal(NewField[UpdateMutateModel, int]("id"), 1)).Run()
+	gotMutated, err := db.Select[UpdateMutateModel]().Where(Equal(NewField[UpdateMutateModel, int]("id"), 1)).Run(ctx, true)
 	if err != nil || len(gotMutated) != 1 || gotMutated[0].Name != "mutated_update" {
 		t.Fatalf("expected mutated update, got %+v", gotMutated)
 	}
@@ -856,7 +856,7 @@ func TestAllTypeScanningAndHooks(t *testing.T) {
 	}
 
 	// Select back
-	rows, err := db.Select[AllTypesModel]().Run(ctx)
+	rows, err := db.Select[AllTypesModel]().Run(ctx, false)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %v (%d)", err, len(rows))
 	}

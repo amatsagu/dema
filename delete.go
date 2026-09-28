@@ -31,18 +31,7 @@ func (b *DeleteBuilder[T]) Where(cond Condition) *DeleteBuilder[T] {
 	return b
 }
 
-func (b *DeleteBuilder[T]) Run(args ...any) error {
-	var ctx context.Context
-	cache := true
-
-	for _, arg := range args {
-		switch a := arg.(type) {
-		case context.Context:
-			ctx = a
-		case bool:
-			cache = a
-		}
-	}
+func (b *DeleteBuilder[T]) Run(ctx context.Context, cache bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}

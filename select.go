@@ -72,7 +72,7 @@ func (b SelectBuilder[T]) Limit(amount int) SelectBuilder[T] {
 	return b
 }
 
-// Page applies 1-indexed pagination (current page, page size).
+// Applies 1-indexed pagination (current page, page size).
 func (b SelectBuilder[T]) Page(current, size int) SelectBuilder[T] {
 	if current < 1 {
 		current = 1
@@ -152,22 +152,7 @@ func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) 
 	return table.getSelectSQL(qb.buf)
 }
 
-func (b SelectBuilder[T]) Run(args ...any) ([]T, error) {
-	return b.run(args)
-}
-
-func (b SelectBuilder[T]) run(args []any) ([]T, error) {
-	var ctx context.Context
-	cache := true
-
-	for _, arg := range args {
-		switch a := arg.(type) {
-		case context.Context:
-			ctx = a
-		case bool:
-			cache = a
-		}
-	}
+func (b SelectBuilder[T]) Run(ctx context.Context, cache bool) ([]T, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

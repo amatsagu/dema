@@ -1288,7 +1288,7 @@ func TestExampleMDSnippet(t *testing.T) {
 		t.Fatalf("unexpected user: %+v", uNew)
 	}
 
-	data2, err := db.Select[ExampleUser]().Where(Equal(ExampleUserField.Name, "Betta")).Run()
+	data2, err := db.Select[ExampleUser]().Where(Equal(ExampleUserField.Name, "Betta")).Run(context.Background(), true)
 	if err != nil || len(data2) == 0 {
 		t.Fatalf("failed to fetch Betta: %v", err)
 	}
@@ -1317,7 +1317,7 @@ func TestPKWithoutOmitZeroAndMissingPK(t *testing.T) {
 		t.Fatalf("inserting ID 0 should succeed: %v", err)
 	}
 
-	rows, err := db.Select[UserNoOmit]().Run()
+	rows, err := db.Select[UserNoOmit]().Run(ctx, true)
 	if err != nil || len(rows) != 1 || rows[0].ID != 0 {
 		t.Fatalf("expected row with ID 0, got %+v", rows)
 	}
@@ -1340,7 +1340,7 @@ func TestPKWithoutOmitZeroAndMissingPK(t *testing.T) {
 		t.Fatalf("inserting second with omitzero should succeed: %v", err)
 	}
 
-	rowsOmit, err := db.Select[UserWithOmit]().Run()
+	rowsOmit, err := db.Select[UserWithOmit]().Run(ctx, true)
 	if err != nil || len(rowsOmit) != 2 || rowsOmit[0].ID == 0 || rowsOmit[1].ID == 0 {
 		t.Fatalf("expected autoincremented IDs, got %+v", rowsOmit)
 	}
@@ -1398,7 +1398,7 @@ func TestTxAndBuilderExtendedCoverage(t *testing.T) {
 	}
 
 	ub := db.Update(User{ID: 1, Name: "AdminRowUpdated"})
-	if err := ub.Run(); err != nil {
+	if err := ub.Run(ctx, true); err != nil {
 		t.Fatalf("UpdateBuilder.Row failed: %v", err)
 	}
 
@@ -1417,12 +1417,12 @@ func TestTxAndBuilderExtendedCoverage(t *testing.T) {
 		t.Fatalf("expected error on empty tx.UpdateRow")
 	}
 
-	if err := tx.Delete[User]().Run(); err == nil {
+	if err := tx.Delete[User]().Run(true); err == nil {
 		t.Fatalf("expected error on tx.Delete without WHERE")
 	}
 
 	txUb := tx.Update(User{ID: 1, Name: "TxRowUpdated"})
-	if err := txUb.Run(); err != nil {
+	if err := txUb.Run(true); err != nil {
 		t.Fatalf("tx.Update with row failed: %v", err)
 	}
 
