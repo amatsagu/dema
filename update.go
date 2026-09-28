@@ -30,11 +30,7 @@ type UpdateBuilder[T any] struct {
 }
 
 func (db *DB) Update[T any](rows ...T) UpdateBuilder[T] {
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ != nil && typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
+	typ, _ := getModelType[T]()
 	var table *tableInfo
 	if typ != nil {
 		table, _ = db.getTableInfo(typ)
@@ -96,11 +92,7 @@ func (b UpdateBuilder[T]) Run(args ...any) error {
 
 	table := b.table
 	if table == nil {
-		var zero T
-		typ := reflect.TypeOf(zero)
-		if typ != nil && typ.Kind() == reflect.Pointer {
-			typ = typ.Elem()
-		}
+		typ, _ := getModelType[T]()
 		var err error
 		table, err = b.db.getTableInfo(typ)
 		if err != nil {

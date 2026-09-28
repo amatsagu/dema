@@ -13,12 +13,7 @@ import (
 
 // RawQuery executes a raw SQL query and scans results into a slice of model struct T.
 func (db *DB) RawQuery[T any](ctx context.Context, sql string, cache bool, args ...any) ([]T, error) {
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
+	typ, _ := getModelType[T]()
 	table, err := db.getTableInfo(typ)
 	if err != nil {
 		return nil, err
@@ -48,9 +43,7 @@ func executeRawQuery[T any](conn *sqlite.Conn, table *tableInfo, sql string, cac
 	var colMap []*colInfo
 	var mapInited bool
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	isPtrModel := typ.Kind() == reflect.Pointer
+	_, isPtrModel := getModelType[T]()
 
 	opts.ResultFunc = func(stmt *sqlite.Stmt) error {
 		if !mapInited {

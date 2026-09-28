@@ -91,13 +91,9 @@ func (db *DB) Table[T any](name string, onInsert, onUpdate, onDelete func(*T) er
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	var zero T
-	typ := reflect.TypeOf(zero)
+	typ, _ := getModelType[T]()
 	if typ == nil {
 		panic("dema: model type cannot be nil")
-	}
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
 	}
 	if typ.Kind() != reflect.Struct {
 		panic(fmt.Sprintf("dema: model type %s must be a struct", typ.String()))

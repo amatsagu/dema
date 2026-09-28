@@ -30,12 +30,7 @@ type SelectBuilder[T any] struct {
 }
 
 func (db *DB) Select[T any]() SelectBuilder[T] {
-	var zero T
-	typ := reflect.TypeOf(zero)
-	isPtr := typ != nil && typ.Kind() == reflect.Pointer
-	if isPtr {
-		typ = typ.Elem()
-	}
+	typ, isPtr := getModelType[T]()
 	var table *tableInfo
 	if typ != nil {
 		table, _ = db.getTableInfo(typ)
@@ -92,6 +87,21 @@ func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) 
 		return table.defaultSelectSQL
 	}
 
+	if len(b.orders) == 0 && !b.hasOff {
+		if eq, ok := b.cond.(equalCond); ok {
+			if col, ok := table.colByName[eq.col]; ok {
+				if b.hasLim && b.limit == 1 {
+					opts.Args = append(opts.Args, encodeValue(eq.val))
+					return col.equalLimit1SQL
+				}
+				if !b.hasLim {
+					opts.Args = append(opts.Args, encodeValue(eq.val))
+					return col.equalSQL
+				}
+			}
+		}
+	}
+
 	qb := getQueryBuffer()
 	defer putQueryBuffer(qb)
 
@@ -146,13 +156,9 @@ func (b SelectBuilder[T]) Run(args ...any) ([]T, error) {
 	table := b.table
 	isPtrModel := b.isPtrModel
 	if table == nil {
-		var zero T
-		typ := reflect.TypeOf(zero)
-		isPtrModel = typ != nil && typ.Kind() == reflect.Pointer
-		if isPtrModel {
-			typ = typ.Elem()
-		}
 		var err error
+		var typ reflect.Type
+		typ, isPtrModel = getModelType[T]()
 		table, err = b.db.getTableInfo(typ)
 		if err != nil {
 			return nil, err

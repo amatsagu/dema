@@ -17,49 +17,62 @@ var (
 )
 
 type colInfo struct {
-	typ         reflect.Type
-	name        string
-	fieldName   string
-	index       []int
-	offset      uintptr
-	colIdx      int
-	kind        reflect.Kind
-	elemKind    reflect.Kind
-	isPK        bool
-	isOmitZero  bool
-	isPtr       bool
-	isRuneSlice bool
-	isEncoder   bool
-	isDecoder   bool
+	typ            reflect.Type
+	name           string
+	fieldName      string
+	equalSQL       string
+	equalLimit1SQL string
+	index          []int
+	offset         uintptr
+	colIdx         int
+	kind           reflect.Kind
+	elemKind       reflect.Kind
+	isPK           bool
+	isOmitZero     bool
+	isPtr          bool
+	isRuneSlice    bool
+	isEncoder      bool
+	isDecoder      bool
+}
+
+func getModelType[T any]() (reflect.Type, bool) {
+	typ := reflect.TypeOf((*T)(nil)).Elem()
+	if typ.Kind() == reflect.Pointer {
+		return typ.Elem(), true
+	}
+	return typ, false
+}
+
+
+type sqlPlan struct {
+	sql  string
+	cols []*colInfo
 }
 
 type tableInfo struct {
-	typ                reflect.Type
-	colByName          map[string]*colInfo
-	insertSQLCache     map[uint64]string
-	insertColsCache    map[uint64][]*colInfo
-	upsertSQLCache     map[uint64]string
-	upsertColsCache    map[uint64][]*colInfo
-	updateRowSQLCache  map[uint64]string
-	updateRowColsCache map[uint64][]*colInfo
-	selectCache        atomic.Pointer[map[string]string]
-	updateSQLCache     atomic.Pointer[map[string]string]
-	onInsert           func(any) error
-	onUpdate           func(any) error
-	onDelete           func(any) error
-	name               string
-	defaultSelectSQL   string
-	defaultInsertSQL   string
-	defaultUpsertSQL   string
-	defaultUpdateSQL   string
-	allCols            []*colInfo
-	pkCols             []*colInfo
-	nonPkCols          []*colInfo
-	defaultInsertCols  []*colInfo
-	defaultUpsertCols  []*colInfo
-	defaultUpdateCols  []*colInfo
-	cacheMu            sync.RWMutex
-	selectMu           sync.RWMutex
+	typ               reflect.Type
+	colByName         map[string]*colInfo
+	insertPlans       atomic.Pointer[map[uint64]*sqlPlan]
+	upsertPlans       atomic.Pointer[map[uint64]*sqlPlan]
+	updateRowPlans    atomic.Pointer[map[uint64]*sqlPlan]
+	selectCache       atomic.Pointer[map[string]string]
+	updateSQLCache    atomic.Pointer[map[string]string]
+	onInsert          func(any) error
+	onUpdate          func(any) error
+	onDelete          func(any) error
+	name              string
+	defaultSelectSQL  string
+	defaultInsertSQL  string
+	defaultUpsertSQL  string
+	defaultUpdateSQL  string
+	allCols           []*colInfo
+	pkCols            []*colInfo
+	nonPkCols         []*colInfo
+	defaultInsertCols []*colInfo
+	defaultUpsertCols []*colInfo
+	defaultUpdateCols []*colInfo
+	cacheMu           sync.Mutex
+	selectMu          sync.Mutex
 }
 
 func parseTag(tag string, defaultName string) (name string, isPK bool, isOmitZero bool, ignore bool) {
@@ -143,16 +156,12 @@ func inspectStruct(t reflect.Type, indexPrefix []int, baseOffset uintptr) []*col
 }
 
 func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T) error) (*tableInfo, error) {
-	var zero T
-	typ := reflect.TypeOf(zero)
+	typ, _ := getModelType[T]()
 	if typ == nil {
 		return nil, lumo.WrapString("model type must be a struct").
 			Include("dema_table", tableName).
 			Include("dema_operation", "REGISTER").
 			Include("dema_expected", "valid struct type")
-	}
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
 	}
 	if typ.Kind() != reflect.Struct {
 		return nil, lumo.WrapString("model type %s must be a struct", typ.String()).
@@ -174,21 +183,21 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 	}
 
 	info := &tableInfo{
-		name:               tableName,
-		typ:                typ,
-		allCols:            cols,
-		colByName:          make(map[string]*colInfo, len(cols)),
-		insertSQLCache:     make(map[uint64]string),
-		insertColsCache:    make(map[uint64][]*colInfo),
-		upsertSQLCache:     make(map[uint64]string),
-		upsertColsCache:    make(map[uint64][]*colInfo),
-		updateRowSQLCache:  make(map[uint64]string),
-		updateRowColsCache: make(map[uint64][]*colInfo),
+		name:      tableName,
+		typ:       typ,
+		allCols:   cols,
+		colByName: make(map[string]*colInfo, len(cols)),
 	}
 	selMap := make(map[string]string)
 	info.selectCache.Store(&selMap)
 	updMap := make(map[string]string)
 	info.updateSQLCache.Store(&updMap)
+	inMap := make(map[uint64]*sqlPlan)
+	info.insertPlans.Store(&inMap)
+	upMap := make(map[uint64]*sqlPlan)
+	info.upsertPlans.Store(&upMap)
+	urMap := make(map[uint64]*sqlPlan)
+	info.updateRowPlans.Store(&urMap)
 
 	for _, col := range cols {
 		info.colByName[col.name] = col
@@ -214,12 +223,31 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 	sb.WriteString(`"`)
 	info.defaultSelectSQL = sb.String()
 
+	for _, col := range cols {
+		col.equalSQL = info.defaultSelectSQL + ` WHERE "` + col.name + `" = ?`
+		col.equalLimit1SQL = info.defaultSelectSQL + ` WHERE "` + col.name + `" = ? LIMIT 1`
+	}
+
 	allMask := (uint64(1) << len(cols)) - 1
 	info.defaultInsertSQL, info.defaultInsertCols = info.getInsertPlan(allMask)
 
 	if len(info.pkCols) > 0 {
 		info.defaultUpsertSQL, info.defaultUpsertCols = info.getUpsertPlan(allMask)
 		info.defaultUpdateSQL, info.defaultUpdateCols = info.getUpdateRowPlan(allMask)
+	}
+
+	var omitMask uint64
+	for i, col := range cols {
+		if !col.isOmitZero {
+			omitMask |= (uint64(1) << i)
+		}
+	}
+	if omitMask != allMask {
+		info.getInsertPlan(omitMask)
+		if len(info.pkCols) > 0 {
+			info.getUpsertPlan(omitMask)
+			info.getUpdateRowPlan(omitMask)
+		}
 	}
 
 	if onInsert != nil {
@@ -331,18 +359,21 @@ func (t *tableInfo) getInsertPlan(mask uint64) (string, []*colInfo) {
 		return t.defaultInsertSQL, t.defaultInsertCols
 	}
 
-	t.cacheMu.RLock()
-	sql, ok := t.insertSQLCache[mask]
-	cols := t.insertColsCache[mask]
-	t.cacheMu.RUnlock()
-	if ok {
-		return sql, cols
+	if p := t.insertPlans.Load(); p != nil {
+		if plan, ok := (*p)[mask]; ok {
+			return plan.sql, plan.cols
+		}
 	}
 
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
-	if sql, ok := t.insertSQLCache[mask]; ok {
-		return sql, t.insertColsCache[mask]
+	p := t.insertPlans.Load()
+	var current map[uint64]*sqlPlan
+	if p != nil {
+		current = *p
+		if plan, ok := current[mask]; ok {
+			return plan.sql, plan.cols
+		}
 	}
 
 	var activeCols []*colInfo
@@ -377,9 +408,14 @@ func (t *tableInfo) getInsertPlan(mask uint64) (string, []*colInfo) {
 		sb.WriteString(");")
 	}
 
-	sql = sb.String()
-	t.insertSQLCache[mask] = sql
-	t.insertColsCache[mask] = activeCols
+	sql := sb.String()
+	plan := &sqlPlan{sql: sql, cols: activeCols}
+	newMap := make(map[uint64]*sqlPlan, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[mask] = plan
+	t.insertPlans.Store(&newMap)
 	return sql, activeCols
 }
 
@@ -389,18 +425,21 @@ func (t *tableInfo) getUpsertPlan(mask uint64) (string, []*colInfo) {
 		return t.defaultUpsertSQL, t.defaultUpsertCols
 	}
 
-	t.cacheMu.RLock()
-	sql, ok := t.upsertSQLCache[mask]
-	cols := t.upsertColsCache[mask]
-	t.cacheMu.RUnlock()
-	if ok {
-		return sql, cols
+	if p := t.upsertPlans.Load(); p != nil {
+		if plan, ok := (*p)[mask]; ok {
+			return plan.sql, plan.cols
+		}
 	}
 
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
-	if sql, ok := t.upsertSQLCache[mask]; ok {
-		return sql, t.upsertColsCache[mask]
+	p := t.upsertPlans.Load()
+	var current map[uint64]*sqlPlan
+	if p != nil {
+		current = *p
+		if plan, ok := current[mask]; ok {
+			return plan.sql, plan.cols
+		}
 	}
 
 	var activeCols []*colInfo
@@ -468,9 +507,14 @@ func (t *tableInfo) getUpsertPlan(mask uint64) (string, []*colInfo) {
 		}
 	}
 
-	sql = sb.String()
-	t.upsertSQLCache[mask] = sql
-	t.upsertColsCache[mask] = activeCols
+	sql := sb.String()
+	plan := &sqlPlan{sql: sql, cols: activeCols}
+	newMap := make(map[uint64]*sqlPlan, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[mask] = plan
+	t.upsertPlans.Store(&newMap)
 	return sql, activeCols
 }
 
@@ -480,18 +524,21 @@ func (t *tableInfo) getUpdateRowPlan(mask uint64) (string, []*colInfo) {
 		return t.defaultUpdateSQL, t.defaultUpdateCols
 	}
 
-	t.cacheMu.RLock()
-	sql, ok := t.updateRowSQLCache[mask]
-	cols := t.updateRowColsCache[mask]
-	t.cacheMu.RUnlock()
-	if ok {
-		return sql, cols
+	if p := t.updateRowPlans.Load(); p != nil {
+		if plan, ok := (*p)[mask]; ok {
+			return plan.sql, plan.cols
+		}
 	}
 
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
-	if sql, ok := t.updateRowSQLCache[mask]; ok {
-		return sql, t.updateRowColsCache[mask]
+	p := t.updateRowPlans.Load()
+	var current map[uint64]*sqlPlan
+	if p != nil {
+		current = *p
+		if plan, ok := current[mask]; ok {
+			return plan.sql, plan.cols
+		}
 	}
 
 	var setCols []*colInfo
@@ -501,8 +548,6 @@ func (t *tableInfo) getUpdateRowPlan(mask uint64) (string, []*colInfo) {
 		}
 	}
 	if len(setCols) == 0 {
-		t.updateRowSQLCache[mask] = ""
-		t.updateRowColsCache[mask] = nil
 		return "", nil
 	}
 
@@ -533,20 +578,26 @@ func (t *tableInfo) getUpdateRowPlan(mask uint64) (string, []*colInfo) {
 	copy(fullCols, setCols)
 	copy(fullCols[len(setCols):], t.pkCols)
 
-	sql = sb.String()
-	t.updateRowSQLCache[mask] = sql
-	t.updateRowColsCache[mask] = fullCols
+	sql := sb.String()
+	plan := &sqlPlan{sql: sql, cols: fullCols}
+	newMap := make(map[uint64]*sqlPlan, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[mask] = plan
+	t.updateRowPlans.Store(&newMap)
 	return sql, fullCols
 }
 
 func (t *tableInfo) getSelectSQL(qb *queryBuffer) string {
+	b := qb.buf
 	if p := t.selectCache.Load(); p != nil {
-		if sql, ok := (*p)[string(qb.Bytes())]; ok {
+		if sql, ok := (*p)[string(b)]; ok {
 			return sql
 		}
 	}
 
-	key := string(qb.Bytes())
+	key := string(b)
 	t.selectMu.Lock()
 	defer t.selectMu.Unlock()
 	p := t.selectCache.Load()
@@ -567,13 +618,14 @@ func (t *tableInfo) getSelectSQL(qb *queryBuffer) string {
 }
 
 func (t *tableInfo) getUpdateSQL(qb *queryBuffer) string {
+	b := qb.buf
 	if p := t.updateSQLCache.Load(); p != nil {
-		if sql, ok := (*p)[string(qb.Bytes())]; ok {
+		if sql, ok := (*p)[string(b)]; ok {
 			return sql
 		}
 	}
 
-	key := string(qb.Bytes())
+	key := string(b)
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
 	p := t.updateSQLCache.Load()

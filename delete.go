@@ -2,7 +2,6 @@ package dema
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/amatsagu/lumo"
 	"zombiezen.com/go/sqlite"
@@ -10,13 +9,20 @@ import (
 )
 
 type DeleteBuilder[T any] struct {
-	db   *DB
-	cond Condition
+	db    *DB
+	table *tableInfo
+	cond  Condition
 }
 
 func (db *DB) Delete[T any]() *DeleteBuilder[T] {
+	typ, _ := getModelType[T]()
+	var table *tableInfo
+	if typ != nil {
+		table, _ = db.getTableInfo(typ)
+	}
 	return &DeleteBuilder[T]{
-		db: db,
+		db:    db,
+		table: table,
 	}
 }
 
@@ -40,15 +46,14 @@ func (b *DeleteBuilder[T]) Run(args ...any) error {
 		}
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
-	table, err := b.db.getTableInfo(typ)
-	if err != nil {
-		return err
+	table := b.table
+	if table == nil {
+		typ, _ := getModelType[T]()
+		var err error
+		table, err = b.db.getTableInfo(typ)
+		if err != nil {
+			return err
+		}
 	}
 
 	if b.cond == nil {

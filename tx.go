@@ -147,11 +147,7 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 		cache = cacheOpt[0]
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
+	typ, isPtrModel := getModelType[T]()
 
 	table, err := b.tx.db.getTableInfo(typ)
 	if err != nil {
@@ -170,7 +166,6 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 
 	querySQL := b.builder.buildSQL(table, opts)
 
-	isPtrModel := typ != reflect.TypeOf(zero)
 	if isPtrModel {
 		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
 			elem := reflect.New(table.typ)
@@ -402,11 +397,7 @@ func (b *TxUpdateBuilder[T]) Run(cacheOpt ...bool) error {
 
 	table := b.builder.table
 	if table == nil {
-		var zero T
-		typ := reflect.TypeOf(zero)
-		if typ != nil && typ.Kind() == reflect.Pointer {
-			typ = typ.Elem()
-		}
+		typ, _ := getModelType[T]()
 		var err error
 		table, err = b.tx.db.getTableInfo(typ)
 		if err != nil {
@@ -521,12 +512,7 @@ func (b *TxDeleteBuilder[T]) Run(cacheOpt ...bool) error {
 		cache = cacheOpt[0]
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
+	typ, _ := getModelType[T]()
 	table, err := b.tx.db.getTableInfo(typ)
 	if err != nil {
 		return err
@@ -556,12 +542,7 @@ func (tx *Tx) RawQuery[T any](sql string, cache bool, args ...any) ([]T, error) 
 		return nil, err
 	}
 
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-
+	typ, _ := getModelType[T]()
 	table, err := tx.db.getTableInfo(typ)
 	if err != nil {
 		return nil, err
