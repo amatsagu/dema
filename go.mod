@@ -3,7 +3,11 @@ module github.com/amatsagu/dema
 go 1.27.1
 
 require (
-	github.com/amatsagu/lumo v1.0.0 // indirect
+	github.com/amatsagu/lumo v1.0.0
+	zombiezen.com/go/sqlite v1.4.2
+)
+
+require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -15,5 +19,4 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.37.1 // indirect
-	zombiezen.com/go/sqlite v1.4.2 // indirect
 )
