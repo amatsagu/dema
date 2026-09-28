@@ -1,6 +1,7 @@
 package dema
 
 import (
+	"reflect"
 	"strings"
 )
 
@@ -43,7 +44,7 @@ func encodeOtherValue(v any) any {
 			return boxedTrue
 		}
 		return boxedFalse
-	case int16, int8, uint16, uint8, float64, float32:
+	case int16, int8, uint16, uint8, float64, float32, []byte:
 		return v
 	case []rune:
 		return string(val)
@@ -52,7 +53,97 @@ func encodeOtherValue(v any) any {
 			return encoded
 		}
 		return v
+	case *string:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *int:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *int64:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *int32:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *int16:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *int8:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *uint:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *uint64:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *uint32:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *uint16:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *uint8:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *bool:
+		if val == nil {
+			return nil
+		}
+		if *val {
+			return boxedTrue
+		}
+		return boxedFalse
+	case *float64:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *float32:
+		if val == nil {
+			return nil
+		}
+		return *val
+	case *[]rune:
+		if val == nil {
+			return nil
+		}
+		return string(*val)
+	case *[]byte:
+		if val == nil {
+			return nil
+		}
+		return *val
 	default:
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Pointer {
+			if rv.IsNil() {
+				return nil
+			}
+			return encodeValue(rv.Elem().Interface())
+		}
 		return v
 	}
 }

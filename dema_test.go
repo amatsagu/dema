@@ -1442,3 +1442,164 @@ func TestTxAndBuilderExtendedCoverage(t *testing.T) {
 		t.Fatalf("expected safe rollback on closed tx, got: %v", err)
 	}
 }
+
+type customDecoderVal struct {
+	v string
+}
+
+func (c *customDecoderVal) DecodeDema(raw any) error {
+	if s, ok := raw.(string); ok {
+		c.v = "decoded:" + s
+	}
+	return nil
+}
+
+type customNamedID uint32
+type customNamedName string
+
+func TestRawQueryPrimitives(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Setup table for test
+	err := db.RawExecute(ctx, `CREATE TABLE colors (
+		id INTEGER PRIMARY KEY,
+		name TEXT,
+		code TEXT,
+		score REAL,
+		is_warm BOOLEAN,
+		extra BLOB,
+		nullable_val INTEGER
+	);`, false)
+	if err != nil {
+		t.Fatalf("failed to create colors table: %v", err)
+	}
+	err = db.RawExecute(ctx, `INSERT INTO colors (id, name, code, score, is_warm, extra, nullable_val) VALUES (1, 'red', 'RED01', 9.5, 1, X'CAFE', NULL);`, false)
+	if err != nil {
+		t.Fatalf("failed to insert color 1: %v", err)
+	}
+	err = db.RawExecute(ctx, `INSERT INTO colors (id, name, code, score, is_warm, extra, nullable_val) VALUES (2, 'blue', 'BLU02', 8.2, 0, X'BEEF', 42);`, false)
+	if err != nil {
+		t.Fatalf("failed to insert color 2: %v", err)
+	}
+
+	// 1. Exact user example: RawQuery[uint32]
+	counts, err := db.RawQuery[uint32](ctx, "SELECT COUNT(*) FROM colors;", false)
+	if err != nil {
+		t.Fatalf("RawQuery[uint32] failed: %v", err)
+	}
+	if len(counts) != 1 || counts[0] != 2 {
+		t.Fatalf("expected [2], got %+v", counts)
+	}
+
+	// 2. All integer types
+	u64s, err := db.RawQuery[uint64](ctx, "SELECT id FROM colors ORDER BY id;", false)
+	if err != nil || len(u64s) != 2 || u64s[0] != 1 || u64s[1] != 2 {
+		t.Fatalf("uint64 failed: %v, %+v", err, u64s)
+	}
+	i32s, err := db.RawQuery[int32](ctx, "SELECT id FROM colors ORDER BY id;", false)
+	if err != nil || len(i32s) != 2 || i32s[0] != 1 || i32s[1] != 2 {
+		t.Fatalf("int32 failed: %v, %+v", err, i32s)
+	}
+	i64s, err := db.RawQuery[int64](ctx, "SELECT id FROM colors ORDER BY id;", false)
+	if err != nil || len(i64s) != 2 || i64s[0] != 1 || i64s[1] != 2 {
+		t.Fatalf("int64 failed: %v, %+v", err, i64s)
+	}
+	ints, err := db.RawQuery[int](ctx, "SELECT id FROM colors ORDER BY id;", false)
+	if err != nil || len(ints) != 2 || ints[0] != 1 || ints[1] != 2 {
+		t.Fatalf("int failed: %v, %+v", err, ints)
+	}
+
+	// 3. String & []rune
+	names, err := db.RawQuery[string](ctx, "SELECT name FROM colors ORDER BY id;", false)
+	if err != nil || len(names) != 2 || names[0] != "red" || names[1] != "blue" {
+		t.Fatalf("string failed: %v, %+v", err, names)
+	}
+	runes, err := db.RawQuery[[]rune](ctx, "SELECT code FROM colors WHERE id = 1;", false)
+	if err != nil || len(runes) != 1 || string(runes[0]) != "RED01" {
+		t.Fatalf("[]rune failed: %v, %+v", err, runes)
+	}
+
+	// 4. Floats & bools & bytes
+	scores, err := db.RawQuery[float64](ctx, "SELECT score FROM colors WHERE id = 1;", false)
+	if err != nil || len(scores) != 1 || scores[0] != 9.5 {
+		t.Fatalf("float64 failed: %v, %+v", err, scores)
+	}
+	f32s, err := db.RawQuery[float32](ctx, "SELECT score FROM colors WHERE id = 1;", false)
+	if err != nil || len(f32s) != 1 || f32s[0] != 9.5 {
+		t.Fatalf("float32 failed: %v, %+v", err, f32s)
+	}
+	bools, err := db.RawQuery[bool](ctx, "SELECT is_warm FROM colors ORDER BY id;", false)
+	if err != nil || len(bools) != 2 || !bools[0] || bools[1] {
+		t.Fatalf("bool failed: %v, %+v", err, bools)
+	}
+	blobs, err := db.RawQuery[[]byte](ctx, "SELECT extra FROM colors WHERE id = 1;", false)
+	if err != nil || len(blobs) != 1 || len(blobs[0]) != 2 || blobs[0][0] != 0xCA || blobs[0][1] != 0xFE {
+		t.Fatalf("[]byte failed: %v, %+v", err, blobs)
+	}
+
+	// 5. Pointers (null and non-null)
+	nullPtrs, err := db.RawQuery[*uint32](ctx, "SELECT nullable_val FROM colors ORDER BY id;", false)
+	if err != nil || len(nullPtrs) != 2 {
+		t.Fatalf("*uint32 failed: %v, %+v", err, nullPtrs)
+	}
+	if nullPtrs[0] != nil {
+		t.Fatalf("expected nil for null column, got %v", *nullPtrs[0])
+	}
+	if nullPtrs[1] == nil || *nullPtrs[1] != 42 {
+		t.Fatalf("expected 42 for non-null column, got %v", nullPtrs[1])
+	}
+
+	strPtrs, err := db.RawQuery[*string](ctx, "SELECT name FROM colors ORDER BY id;", false)
+	if err != nil || len(strPtrs) != 2 || strPtrs[0] == nil || *strPtrs[0] != "red" {
+		t.Fatalf("*string failed: %v, %+v", err, strPtrs)
+	}
+
+	// 6. Custom named types
+	namedIDs, err := db.RawQuery[customNamedID](ctx, "SELECT id FROM colors WHERE id = 1;", false)
+	if err != nil || len(namedIDs) != 1 || namedIDs[0] != 1 {
+		t.Fatalf("customNamedID failed: %v, %+v", err, namedIDs)
+	}
+	namedNames, err := db.RawQuery[customNamedName](ctx, "SELECT name FROM colors WHERE id = 1;", false)
+	if err != nil || len(namedNames) != 1 || namedNames[0] != "red" {
+		t.Fatalf("customNamedName failed: %v, %+v", err, namedNames)
+	}
+
+	// 7. Custom FieldDecoder
+	decValues, err := db.RawQuery[customDecoderVal](ctx, "SELECT name FROM colors WHERE id = 1;", false)
+	if err != nil || len(decValues) != 1 || decValues[0].v != "decoded:red" {
+		t.Fatalf("customDecoderVal failed: %v, %+v", err, decValues)
+	}
+
+	// 8. In transaction
+	tx, err := db.Transaction(ctx)
+	if err != nil {
+		t.Fatalf("Transaction failed: %v", err)
+	}
+	defer tx.Rollback()
+
+	txCounts, err := tx.RawQuery[uint32]("SELECT COUNT(*) FROM colors;", false)
+	if err != nil || len(txCounts) != 1 || txCounts[0] != 2 {
+		t.Fatalf("tx.RawQuery[uint32] failed: %v, %+v", err, txCounts)
+	}
+	txNames, err := tx.RawQuery[string]("SELECT name FROM colors WHERE id = ?;", false, 2)
+	if err != nil || len(txNames) != 1 || txNames[0] != "blue" {
+		t.Fatalf("tx.RawQuery[string] with arg failed: %v, %+v", err, txNames)
+	}
+
+	// 9. Passing pointer args (both nil and non-nil)
+	var nilPtr *int
+	nonNilInt := 2
+	nonNilPtr := &nonNilInt
+	resPtrArg, err := db.RawQuery[string](ctx, "SELECT name FROM colors WHERE id = ?;", false, nonNilPtr)
+	if err != nil || len(resPtrArg) != 1 || resPtrArg[0] != "blue" {
+		t.Fatalf("RawQuery with pointer arg failed: %v, %+v", err, resPtrArg)
+	}
+	resNilArg, err := db.RawQuery[uint32](ctx, "SELECT COUNT(*) FROM colors WHERE nullable_val IS ?;", false, nilPtr)
+	if err != nil || len(resNilArg) != 1 || resNilArg[0] != 1 {
+		t.Fatalf("RawQuery with nil pointer arg failed: %v, %+v", err, resNilArg)
+	}
+}
+

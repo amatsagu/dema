@@ -565,6 +565,10 @@ func (tx *Tx) RawQuery[T any](sql string, cache bool, args ...any) ([]T, error) 
 	}
 
 	typ, _ := getModelType[T]()
+	if isScalarType(typ) {
+		return executeRawQueryScalar[T](tx.conn, sql, cache, args...)
+	}
+
 	table, err := tx.db.getTableInfo(typ)
 	if err != nil {
 		return nil, err

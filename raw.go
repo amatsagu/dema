@@ -11,9 +11,22 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-// Executes a raw SQL query and scans results into a slice of model struct T.
+// Executes a raw SQL query and scans results into a slice of model struct T or primitive type T.
 func (db *DB) RawQuery[T any](ctx context.Context, sql string, cache bool, args ...any) ([]T, error) {
 	typ, _ := getModelType[T]()
+	if isScalarType(typ) {
+		conn, err := db.pool.Take(ctx)
+		if err != nil {
+			return nil, lumo.WrapError(err).
+				Include("dema_table", "").
+				Include("dema_operation", "RAW_QUERY").
+				Include("dema_expected", "connection from pool")
+		}
+		defer db.pool.Put(conn)
+
+		return executeRawQueryScalar[T](conn, sql, cache, args...)
+	}
+
 	table, err := db.getTableInfo(typ)
 	if err != nil {
 		return nil, err
@@ -29,6 +42,40 @@ func (db *DB) RawQuery[T any](ctx context.Context, sql string, cache bool, args 
 	defer db.pool.Put(conn)
 
 	return executeRawQuery[T](conn, table, sql, cache, args...)
+}
+
+func executeRawQueryScalar[T any](conn *sqlite.Conn, sql string, cache bool, args ...any) ([]T, error) {
+	opts := getExecOptions()
+	defer putExecOptions(opts)
+	opts.Args = opts.Args[:0]
+	for _, arg := range args {
+		opts.Args = append(opts.Args, encodeValue(arg))
+	}
+
+	results := make([]T, 0, 16)
+	opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+		val, err := scanScalar[T](stmt, 0)
+		if err != nil {
+			return err
+		}
+		results = append(results, val)
+		return nil
+	}
+
+	var err error
+	if cache {
+		err = sqlitex.Execute(conn, sql, opts)
+	} else {
+		err = sqlitex.ExecuteTransient(conn, sql, opts)
+	}
+
+	if err != nil {
+		return nil, lumo.WrapError(err).
+			Include("dema_table", "").
+			Include("dema_operation", "RAW_QUERY").
+			Include("dema_expected", "successful execution")
+	}
+	return results, nil
 }
 
 func executeRawQuery[T any](conn *sqlite.Conn, table *tableInfo, sql string, cache bool, args ...any) ([]T, error) {

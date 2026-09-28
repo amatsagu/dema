@@ -154,14 +154,20 @@ Tx mirrors DB: `Select`, `Insert`, `Upsert`, `Update`, `UpdateRow`, `Delete`, `R
 
 ## Raw SQL
 
+`RawQuery[T]` supports model structs, primitive/scalar types (`uint32`, `int`, `string`, `bool`, `float64`, `[]rune`, `[]byte`), and pointers:
+
 ```go
+// Scalar query
+counts, _ := db.RawQuery[uint32](ctx, "SELECT COUNT(*) FROM users", false)
+
+// Struct query
 users, _ := db.RawQuery[User](ctx,
     `SELECT * FROM "users" WHERE "age" > ?`, true, 18)
 
 db.RawExecute(ctx, `CREATE INDEX idx_age ON "users"("age")`, false)
 
 // In transactions (no ctx parameter)
-users, _ := tx.RawQuery[User](`SELECT * FROM "users" WHERE "age" > ?`, true, 18)
+txCount, _ := tx.RawQuery[uint32](`SELECT COUNT(*) FROM "users" WHERE "age" > ?`, true, 18)
 tx.RawExecute(`UPDATE "users" SET "age" = "age" + 1`, true)
 ```
 
