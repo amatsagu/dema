@@ -11,12 +11,29 @@ type Condition interface {
 	appendArgs(args []any) []any
 }
 
+var (
+	boxedTrue  any = true
+	boxedFalse any = false
+	boxedInt64s = func() [256]any {
+		var a [256]any
+		for i := range a {
+			a[i] = int64(i)
+		}
+		return a
+	}()
+)
+
 func encodeValue(v any) any {
 	if v == nil {
 		return nil
 	}
 	switch val := v.(type) {
-	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8, string, bool, float64, float32:
+	case bool:
+		if val {
+			return boxedTrue
+		}
+		return boxedFalse
+	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8, string, float64, float32:
 		return v
 	case []rune:
 		return string(val)
@@ -30,79 +47,116 @@ func encodeValue(v any) any {
 	}
 }
 
-type equalCond struct {
-	val any
+type fastEqualCondition interface {
+	Condition
+	equalCol() string
+	equalArg() any
+}
+
+type equalCond[V any] struct {
+	val V
 	col string
 }
 
-func (c equalCond) isCondition() { _ = c.col }
-func (c equalCond) toSQL(b *strings.Builder, args *[]any) {
+func (c equalCond[V]) isCondition()   { _ = c.col }
+func (c equalCond[V]) equalCol() string { return c.col }
+func (c equalCond[V]) equalArg() any {
+	switch val := any(c.val).(type) {
+	case int:
+		if uint(val) < 256 {
+			return boxedInt64s[val]
+		}
+	case uint32:
+		if val < 256 {
+			return boxedInt64s[val]
+		}
+	case int64:
+		if uint64(val) < 256 {
+			return boxedInt64s[val]
+		}
+	case int32:
+		if uint32(val) < 256 {
+			return boxedInt64s[val]
+		}
+	case uint:
+		if val < 256 {
+			return boxedInt64s[val]
+		}
+	case bool:
+		if val {
+			return boxedTrue
+		}
+		return boxedFalse
+	}
+	return encodeValue(c.val)
+}
+func (c equalCond[V]) toSQL(b *strings.Builder, args *[]any) {
 	qb := getQueryBuffer()
 	c.writeSQL(qb)
 	b.Write(qb.Bytes())
 	putQueryBuffer(qb)
 	*args = c.appendArgs(*args)
 }
-func (c equalCond) writeSQL(qb *queryBuffer) {
+func (c equalCond[V]) writeSQL(qb *queryBuffer) {
 	qb.WriteString(c.col)
 	qb.WriteString(" = ?")
 }
-func (c equalCond) appendArgs(args []any) []any {
+func (c equalCond[V]) appendArgs(args []any) []any {
 	return append(args, encodeValue(c.val))
 }
 
 func Equal[T any, V any](field Field[T, V], val V) Condition {
-	return equalCond{col: field.Name, val: val}
+	return equalCond[V]{col: field.Name, val: val}
 }
 
-type greaterCond struct {
-	val any
+type greaterCond[V any] struct {
+	val V
 	col string
 }
 
-func (c greaterCond) isCondition() { _ = c.col }
-func (c greaterCond) toSQL(b *strings.Builder, args *[]any) {
+func (c greaterCond[V]) isCondition() { _ = c.col }
+func (c greaterCond[V]) toSQL(b *strings.Builder, args *[]any) {
 	qb := getQueryBuffer()
 	c.writeSQL(qb)
 	b.Write(qb.Bytes())
 	putQueryBuffer(qb)
 	*args = c.appendArgs(*args)
 }
-func (c greaterCond) writeSQL(qb *queryBuffer) {
+func (c greaterCond[V]) writeSQL(qb *queryBuffer) {
 	qb.WriteString(c.col)
 	qb.WriteString(" > ?")
 }
-func (c greaterCond) appendArgs(args []any) []any {
+func (c greaterCond[V]) appendArgs(args []any) []any {
 	return append(args, encodeValue(c.val))
 }
 
 func Greater[T any, V any](field Field[T, V], val V) Condition {
-	return greaterCond{col: field.Name, val: val}
+	return greaterCond[V]{col: field.Name, val: val}
 }
 
-type lesserCond struct {
-	val any
+type lesserCond[V any] struct {
+	val V
 	col string
 }
 
-func (c lesserCond) isCondition() { _ = c.col }
-func (c lesserCond) toSQL(b *strings.Builder, args *[]any) {
+func (c lesserCond[V]) isCondition() { _ = c.col }
+func (c lesserCond[V]) toSQL(b *strings.Builder, args *[]any) {
 	qb := getQueryBuffer()
 	c.writeSQL(qb)
 	b.Write(qb.Bytes())
 	putQueryBuffer(qb)
 	*args = c.appendArgs(*args)
 }
-func (c lesserCond) writeSQL(qb *queryBuffer) {
+func (c lesserCond[V]) writeSQL(qb *queryBuffer) {
 	qb.WriteString(c.col)
 	qb.WriteString(" < ?")
 }
-func (c lesserCond) appendArgs(args []any) []any {
+func (c lesserCond[V]) appendArgs(args []any) []any {
 	return append(args, encodeValue(c.val))
 }
 
 func Lesser[T any, V any](field Field[T, V], val V) Condition {
-	return lesserCond{col: field.Name, val: val}
+	return lesserCond[V]{col: field.Name, val: val}
 }
 
 type withinCond struct {

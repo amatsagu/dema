@@ -32,18 +32,19 @@ func (b *DeleteBuilder[T]) Where(cond Condition) *DeleteBuilder[T] {
 }
 
 func (b *DeleteBuilder[T]) Run(args ...any) error {
-	ctx := context.Background()
+	var ctx context.Context
 	cache := true
 
 	for _, arg := range args {
 		switch a := arg.(type) {
 		case context.Context:
-			if a != nil {
-				ctx = a
-			}
+			ctx = a
 		case bool:
 			cache = a
 		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	table := b.table

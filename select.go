@@ -16,17 +16,19 @@ type orderClause struct {
 }
 
 type SelectBuilder[T any] struct {
-	cond       Condition
-	table      *tableInfo
-	db         *DB
-	conn       *sqlite.Conn
-	ordersBuf  [2]orderClause
-	orders     []orderClause
-	limit      int
-	offset     int
-	hasLim     bool
-	hasOff     bool
-	isPtrModel bool
+	cond        Condition
+	table       *tableInfo
+	db          *DB
+	conn        *sqlite.Conn
+	order0      orderClause
+	order1      orderClause
+	extraOrders []orderClause
+	limit       int
+	offset      int
+	numOrders   uint8
+	hasLim      bool
+	hasOff      bool
+	isPtrModel  bool
 }
 
 func (db *DB) Select[T any]() SelectBuilder[T] {
@@ -48,13 +50,16 @@ func (b SelectBuilder[T]) Where(cond Condition) SelectBuilder[T] {
 }
 
 func (b SelectBuilder[T]) OrderBy[V any](field Field[T, V], dir OrderDirection) SelectBuilder[T] {
-	if b.orders == nil {
-		b.orders = b.ordersBuf[:0]
+	o := orderClause{col: field.Name, dir: dir}
+	switch b.numOrders {
+	case 0:
+		b.order0 = o
+	case 1:
+		b.order1 = o
+	default:
+		b.extraOrders = append(b.extraOrders, o)
 	}
-	b.orders = append(b.orders, orderClause{
-		col: field.Name,
-		dir: dir,
-	})
+	b.numOrders++
 	return b
 }
 
@@ -83,19 +88,19 @@ func (b SelectBuilder[T]) Page(current, size int) SelectBuilder[T] {
 }
 
 func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) string {
-	if b.cond == nil && len(b.orders) == 0 && !b.hasLim && !b.hasOff {
+	if b.cond == nil && b.numOrders == 0 && !b.hasLim && !b.hasOff {
 		return table.defaultSelectSQL
 	}
 
-	if len(b.orders) == 0 && !b.hasOff {
-		if eq, ok := b.cond.(equalCond); ok {
-			if col, ok := table.colByName[eq.col]; ok {
+	if b.numOrders == 0 && !b.hasOff {
+		if eq, ok := b.cond.(fastEqualCondition); ok {
+			if col, ok := table.colByName[eq.equalCol()]; ok {
 				if b.hasLim && b.limit == 1 {
-					opts.Args = append(opts.Args, encodeValue(eq.val))
+					opts.Args = append(opts.Args, eq.equalArg())
 					return col.equalLimit1SQL
 				}
 				if !b.hasLim {
-					opts.Args = append(opts.Args, encodeValue(eq.val))
+					opts.Args = append(opts.Args, eq.equalArg())
 					return col.equalSQL
 				}
 			}
@@ -113,11 +118,20 @@ func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) 
 		opts.Args = b.cond.appendArgs(opts.Args)
 	}
 
-	if len(b.orders) > 0 {
+	if b.numOrders > 0 {
 		qb.WriteString(" ORDER BY ")
-		for i, ord := range b.orders {
+		for i := uint8(0); i < b.numOrders; i++ {
 			if i > 0 {
 				qb.WriteString(", ")
+			}
+			var ord orderClause
+			switch i {
+			case 0:
+				ord = b.order0
+			case 1:
+				ord = b.order1
+			default:
+				ord = b.extraOrders[i-2]
 			}
 			qb.WriteString(`"`)
 			qb.WriteString(ord.col)
@@ -139,18 +153,23 @@ func (b SelectBuilder[T]) buildSQL(table *tableInfo, opts *sqlitex.ExecOptions) 
 }
 
 func (b SelectBuilder[T]) Run(args ...any) ([]T, error) {
-	ctx := context.Background()
+	return b.run(args)
+}
+
+func (b SelectBuilder[T]) run(args []any) ([]T, error) {
+	var ctx context.Context
 	cache := true
 
 	for _, arg := range args {
 		switch a := arg.(type) {
 		case context.Context:
-			if a != nil {
-				ctx = a
-			}
+			ctx = a
 		case bool:
 			cache = a
 		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	table := b.table
@@ -179,6 +198,35 @@ func (b SelectBuilder[T]) Run(args ...any) ([]T, error) {
 			Include("dema_expected", "connection from pool")
 	}
 	defer b.db.pool.Put(conn)
+
+	if b.hasLim && b.limit == 1 && !isPtrModel {
+		results := make([]T, 1)
+		rowPtr := unsafe.Pointer(&results[0])
+		initialArgsLen := len(opts.Args)
+		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+			opts.Args = append(opts.Args, nil)
+			return table.scanRowDirectPtr(stmt, rowPtr)
+		}
+
+		var err error
+		if cache {
+			err = sqlitex.Execute(conn, querySQL, opts)
+		} else {
+			err = sqlitex.ExecuteTransient(conn, querySQL, opts)
+		}
+
+		if err != nil {
+			return nil, lumo.WrapError(err).
+				Include("dema_table", table.name).
+				Include("dema_operation", "SELECT").
+				Include("dema_expected", "successful execution")
+		}
+
+		if len(opts.Args) == initialArgsLen {
+			return results[:0], nil
+		}
+		return results, nil
+	}
 
 	capHint := 16
 	if b.hasLim && b.limit > 0 {

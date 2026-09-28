@@ -11,7 +11,7 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func setupBenchDB(b *testing.B) (*DB, *sqlitex.Pool) {
+func setupBenchDBWithPath(b *testing.B, path string) (*DB, *sqlitex.Pool) {
 	b.Helper()
 
 	seedBytes, err := os.ReadFile("seed.sql")
@@ -19,7 +19,7 @@ func setupBenchDB(b *testing.B) (*DB, *sqlitex.Pool) {
 		b.Fatalf("failed to read seed.sql: %v", err)
 	}
 
-	db, err := Open(":memory:", 5)
+	db, err := Open(path, 5)
 	if err != nil {
 		b.Fatalf("failed to open dema db: %v", err)
 	}
@@ -30,6 +30,7 @@ func setupBenchDB(b *testing.B) (*DB, *sqlitex.Pool) {
 	}
 	defer db.pool.Put(conn)
 
+	_ = sqlitex.ExecuteTransient(conn, "BEGIN;", nil)
 	queries := strings.Split(string(seedBytes), ";")
 	for _, q := range queries {
 		q = strings.TrimSpace(q)
@@ -40,6 +41,7 @@ func setupBenchDB(b *testing.B) (*DB, *sqlitex.Pool) {
 			b.Fatalf("failed executing seed query: %v", err)
 		}
 	}
+	_ = sqlitex.ExecuteTransient(conn, "COMMIT;", nil)
 
 	db.Table[User]("users", nil, nil, nil)
 	db.Table[Product]("products", nil, nil, nil)
@@ -48,10 +50,15 @@ func setupBenchDB(b *testing.B) (*DB, *sqlitex.Pool) {
 	return db, db.pool
 }
 
-// --- SelectByID ---
+func setupBenchDB(b *testing.B) (*DB, *sqlitex.Pool) {
+	b.Helper()
+	return setupBenchDBWithPath(b, ":memory:")
+}
 
-func BenchmarkSelectByID_Cached_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+// --- SelectByID Runners ---
+
+func runSelectByID_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -86,8 +93,8 @@ func BenchmarkSelectByID_Cached_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectByID_Cached_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runSelectByID_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -105,8 +112,8 @@ func BenchmarkSelectByID_Cached_Dema(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectByID_Transient_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runSelectByID_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -141,8 +148,8 @@ func BenchmarkSelectByID_Transient_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectByID_Transient_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runSelectByID_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -160,10 +167,10 @@ func BenchmarkSelectByID_Transient_Dema(b *testing.B) {
 	}
 }
 
-// --- SelectFilter ---
+// --- SelectFilter Runners ---
 
-func BenchmarkSelectFilter_Cached_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runSelectFilter_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -200,8 +207,8 @@ func BenchmarkSelectFilter_Cached_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectFilter_Cached_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runSelectFilter_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -220,8 +227,8 @@ func BenchmarkSelectFilter_Cached_Dema(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectFilter_Transient_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runSelectFilter_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -258,8 +265,8 @@ func BenchmarkSelectFilter_Transient_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectFilter_Transient_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runSelectFilter_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -278,10 +285,10 @@ func BenchmarkSelectFilter_Transient_Dema(b *testing.B) {
 	}
 }
 
-// --- Insert ---
+// --- Insert Runners ---
 
-func BenchmarkInsert_Cached_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runInsert_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -304,8 +311,8 @@ func BenchmarkInsert_Cached_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkInsert_Cached_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runInsert_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -324,8 +331,8 @@ func BenchmarkInsert_Cached_Dema(b *testing.B) {
 	}
 }
 
-func BenchmarkInsert_Transient_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runInsert_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -348,8 +355,8 @@ func BenchmarkInsert_Transient_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkInsert_Transient_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runInsert_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -368,10 +375,10 @@ func BenchmarkInsert_Transient_Dema(b *testing.B) {
 	}
 }
 
-// --- Update ---
+// --- Update Runners ---
 
-func BenchmarkUpdate_Cached_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runUpdate_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -392,8 +399,8 @@ func BenchmarkUpdate_Cached_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkUpdate_Cached_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runUpdate_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -409,8 +416,8 @@ func BenchmarkUpdate_Cached_Dema(b *testing.B) {
 	}
 }
 
-func BenchmarkUpdate_Transient_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runUpdate_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -431,8 +438,8 @@ func BenchmarkUpdate_Transient_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkUpdate_Transient_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runUpdate_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -448,10 +455,10 @@ func BenchmarkUpdate_Transient_Dema(b *testing.B) {
 	}
 }
 
-// --- Upsert ---
+// --- Upsert Runners ---
 
-func BenchmarkUpsert_Cached_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runUpsert_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -474,8 +481,8 @@ func BenchmarkUpsert_Cached_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkUpsert_Cached_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runUpsert_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	p := Product{
 		SKU:      "SKU-0001",
@@ -493,8 +500,8 @@ func BenchmarkUpsert_Cached_Dema(b *testing.B) {
 	}
 }
 
-func BenchmarkUpsert_Transient_Raw(b *testing.B) {
-	_, pool := setupBenchDB(b)
+func runUpsert_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
 	ctx := context.Background()
 	b.ReportAllocs()
 
@@ -517,8 +524,8 @@ func BenchmarkUpsert_Transient_Raw(b *testing.B) {
 	}
 }
 
-func BenchmarkUpsert_Transient_Dema(b *testing.B) {
-	db, _ := setupBenchDB(b)
+func runUpsert_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
 	ctx := context.Background()
 	p := Product{
 		SKU:      "SKU-0001",
@@ -534,6 +541,128 @@ func BenchmarkUpsert_Transient_Dema(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// --- Benchmark Definitions (In-Memory) ---
+
+func BenchmarkSelectByID_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runSelectByID_Cached_Raw(b, pool)
+}
+
+func BenchmarkSelectByID_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runSelectByID_Cached_Dema(b, db)
+}
+
+func BenchmarkSelectByID_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runSelectByID_Transient_Raw(b, pool)
+}
+
+func BenchmarkSelectByID_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runSelectByID_Transient_Dema(b, db)
+}
+
+func BenchmarkSelectFilter_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runSelectFilter_Cached_Raw(b, pool)
+}
+
+func BenchmarkSelectFilter_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runSelectFilter_Cached_Dema(b, db)
+}
+
+func BenchmarkSelectFilter_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runSelectFilter_Transient_Raw(b, pool)
+}
+
+func BenchmarkSelectFilter_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runSelectFilter_Transient_Dema(b, db)
+}
+
+func BenchmarkInsert_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Cached_Raw(b, pool)
+}
+
+func BenchmarkInsert_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Cached_Dema(b, db)
+}
+
+func BenchmarkInsert_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Transient_Raw(b, pool)
+}
+
+func BenchmarkInsert_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Transient_Dema(b, db)
+}
+
+func BenchmarkUpdate_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runUpdate_Cached_Raw(b, pool)
+}
+
+func BenchmarkUpdate_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runUpdate_Cached_Dema(b, db)
+}
+
+func BenchmarkUpdate_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runUpdate_Transient_Raw(b, pool)
+}
+
+func BenchmarkUpdate_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runUpdate_Transient_Dema(b, db)
+}
+
+func BenchmarkUpsert_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runUpsert_Cached_Raw(b, pool)
+}
+
+func BenchmarkUpsert_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runUpsert_Cached_Dema(b, db)
+}
+
+func BenchmarkUpsert_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runUpsert_Transient_Raw(b, pool)
+}
+
+func BenchmarkUpsert_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runUpsert_Transient_Dema(b, db)
 }
 
 // --- Backward-Compatible Aliases ---

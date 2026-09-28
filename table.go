@@ -706,27 +706,67 @@ func (col *colInfo) extractValue(base unsafe.Pointer) (any, bool, error) {
 
 	switch col.kind {
 	case reflect.Int:
-		return int64(*(*int)(fieldPtr)), true, nil
+		v := *(*int)(fieldPtr)
+		if uint(v) < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Int64:
-		return *(*int64)(fieldPtr), true, nil
+		v := *(*int64)(fieldPtr)
+		if uint64(v) < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return v, true, nil
 	case reflect.Int32:
-		return int64(*(*int32)(fieldPtr)), true, nil
+		v := *(*int32)(fieldPtr)
+		if uint32(v) < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Int16:
-		return int64(*(*int16)(fieldPtr)), true, nil
+		v := *(*int16)(fieldPtr)
+		if uint16(v) < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Int8:
-		return int64(*(*int8)(fieldPtr)), true, nil
+		v := *(*int8)(fieldPtr)
+		if v >= 0 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Uint:
-		return int64(*(*uint)(fieldPtr)), true, nil
+		v := *(*uint)(fieldPtr)
+		if v < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Uint64:
-		return int64(*(*uint64)(fieldPtr)), true, nil
+		v := *(*uint64)(fieldPtr)
+		if v < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Uint32:
-		return int64(*(*uint32)(fieldPtr)), true, nil
+		v := *(*uint32)(fieldPtr)
+		if v < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Uint16:
-		return int64(*(*uint16)(fieldPtr)), true, nil
+		v := *(*uint16)(fieldPtr)
+		if v < 256 {
+			return boxedInt64s[v], true, nil
+		}
+		return int64(v), true, nil
 	case reflect.Uint8:
-		return int64(*(*uint8)(fieldPtr)), true, nil
+		v := *(*uint8)(fieldPtr)
+		return boxedInt64s[v], true, nil
 	case reflect.Bool:
-		return *(*bool)(fieldPtr), true, nil
+		if *(*bool)(fieldPtr) {
+			return boxedTrue, true, nil
+		}
+		return boxedFalse, true, nil
 	case reflect.Float64:
 		return *(*float64)(fieldPtr), true, nil
 	case reflect.Float32:

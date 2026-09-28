@@ -154,17 +154,46 @@ func (b *TxSelectBuilder[T]) Run(cacheOpt ...bool) ([]T, error) {
 		return nil, err
 	}
 
-	capHint := 16
-	if b.builder.hasLim && b.builder.limit > 0 {
-		capHint = b.builder.limit
-	}
-	results := make([]T, 0, capHint)
-
 	opts := getExecOptions()
 	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
 	querySQL := b.builder.buildSQL(table, opts)
+
+	if b.builder.hasLim && b.builder.limit == 1 && !isPtrModel {
+		results := make([]T, 1)
+		rowPtr := unsafe.Pointer(&results[0])
+		initialArgsLen := len(opts.Args)
+		opts.ResultFunc = func(stmt *sqlite.Stmt) error {
+			opts.Args = append(opts.Args, nil)
+			return table.scanRowDirectPtr(stmt, rowPtr)
+		}
+
+		var err error
+		if cache {
+			err = sqlitex.Execute(b.tx.conn, querySQL, opts)
+		} else {
+			err = sqlitex.ExecuteTransient(b.tx.conn, querySQL, opts)
+		}
+
+		if err != nil {
+			return nil, lumo.WrapError(err).
+				Include("dema_table", table.name).
+				Include("dema_operation", "SELECT").
+				Include("dema_expected", "successful execution")
+		}
+
+		if len(opts.Args) == initialArgsLen {
+			return results[:0], nil
+		}
+		return results, nil
+	}
+
+	capHint := 16
+	if b.builder.hasLim && b.builder.limit > 0 {
+		capHint = b.builder.limit
+	}
+	results := make([]T, 0, capHint)
 
 	if isPtrModel {
 		opts.ResultFunc = func(stmt *sqlite.Stmt) error {

@@ -76,18 +76,19 @@ func (b UpdateBuilder[T]) Row(row T) UpdateBuilder[T] {
 }
 
 func (b UpdateBuilder[T]) Run(args ...any) error {
-	ctx := context.Background()
+	var ctx context.Context
 	cache := true
 
 	for _, arg := range args {
 		switch a := arg.(type) {
 		case context.Context:
-			if a != nil {
-				ctx = a
-			}
+			ctx = a
 		case bool:
 			cache = a
 		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	table := b.table
@@ -360,7 +361,7 @@ func executeUpdateRowSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointe
 				Include("dema_operation", "UPDATE").
 				Include("dema_expected", "field value extraction")
 		}
-		opts.Args = append(opts.Args, encodeValue(val))
+		opts.Args = append(opts.Args, val)
 	}
 
 	var err error

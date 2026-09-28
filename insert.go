@@ -42,7 +42,7 @@ func (db *DB) Insert(args ...any) error {
 	if len(args) == 0 {
 		return nil
 	}
-	ctx := context.Background()
+	var ctx context.Context
 	cache := true
 	var row any
 	singleCandidate := true
@@ -52,9 +52,7 @@ func (db *DB) Insert(args ...any) error {
 		}
 		switch a := arg.(type) {
 		case context.Context:
-			if a != nil {
-				ctx = a
-			}
+			ctx = a
 		case bool:
 			cache = a
 		default:
@@ -65,6 +63,9 @@ func (db *DB) Insert(args ...any) error {
 				row = nil
 			}
 		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	if row != nil && singleCandidate {
@@ -201,7 +202,7 @@ func executeInsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, 
 				Include("dema_operation", "INSERT").
 				Include("dema_expected", "field value extraction")
 		}
-		opts.Args = append(opts.Args, encodeValue(val))
+		opts.Args = append(opts.Args, val)
 	}
 
 	var err error
@@ -240,7 +241,7 @@ func (db *DB) Upsert(args ...any) error {
 	if len(args) == 0 {
 		return nil
 	}
-	ctx := context.Background()
+	var ctx context.Context
 	cache := true
 	var row any
 	singleCandidate := true
@@ -250,9 +251,7 @@ func (db *DB) Upsert(args ...any) error {
 		}
 		switch a := arg.(type) {
 		case context.Context:
-			if a != nil {
-				ctx = a
-			}
+			ctx = a
 		case bool:
 			cache = a
 		default:
@@ -263,6 +262,9 @@ func (db *DB) Upsert(args ...any) error {
 				row = nil
 			}
 		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	if row != nil && singleCandidate {
@@ -365,7 +367,7 @@ func executeUpsertSingle(conn *sqlite.Conn, table *tableInfo, p unsafe.Pointer, 
 				Include("dema_operation", "UPSERT").
 				Include("dema_expected", "field value extraction")
 		}
-		opts.Args = append(opts.Args, encodeValue(val))
+		opts.Args = append(opts.Args, val)
 	}
 
 	var err error
