@@ -57,6 +57,7 @@ type tableInfo struct {
 	updateRowPlans    atomic.Pointer[map[uint64]*sqlPlan]
 	selectCache       atomic.Pointer[map[string]string]
 	updateSQLCache    atomic.Pointer[map[string]string]
+	fastUpdatePlans   atomic.Pointer[map[uint32]string]
 	onInsert          func(any) error
 	onUpdate          func(any) error
 	onDelete          func(any) error
@@ -198,6 +199,8 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 	info.upsertPlans.Store(&upMap)
 	urMap := make(map[uint64]*sqlPlan)
 	info.updateRowPlans.Store(&urMap)
+	fastUpMap := make(map[uint32]string)
+	info.fastUpdatePlans.Store(&fastUpMap)
 
 	for _, col := range cols {
 		info.colByName[col.name] = col
@@ -643,6 +646,70 @@ func (t *tableInfo) getUpdateSQL(qb *queryBuffer) string {
 	newMap[key] = key
 	t.updateSQLCache.Store(&newMap)
 	return key
+}
+
+func (t *tableInfo) getFastUpdateEqualSQL(numSets uint8, col0Name, col1Name, eqColName string) string {
+	c0, ok0 := t.colByName[col0Name]
+	if !ok0 {
+		return ""
+	}
+	cEq, okEq := t.colByName[eqColName]
+	if !okEq {
+		return ""
+	}
+	var key uint32
+	if numSets == 1 {
+		key = uint32(c0.colIdx) | (uint32(cEq.colIdx) << 16) | (1 << 24)
+	} else if numSets == 2 {
+		c1, ok1 := t.colByName[col1Name]
+		if !ok1 {
+			return ""
+		}
+		key = uint32(c0.colIdx) | (uint32(c1.colIdx) << 8) | (uint32(cEq.colIdx) << 16) | (2 << 24)
+	} else {
+		return ""
+	}
+
+	if p := t.fastUpdatePlans.Load(); p != nil {
+		if sql, ok := (*p)[key]; ok {
+			return sql
+		}
+	}
+
+	t.cacheMu.Lock()
+	defer t.cacheMu.Unlock()
+	p := t.fastUpdatePlans.Load()
+	var current map[uint32]string
+	if p != nil {
+		current = *p
+	}
+	if sql, ok := current[key]; ok {
+		return sql
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`UPDATE "`)
+	sb.WriteString(t.name)
+	sb.WriteString(`" SET "`)
+	sb.WriteString(col0Name)
+	sb.WriteString(`" = ?`)
+	if numSets == 2 {
+		sb.WriteString(`, "`)
+		sb.WriteString(col1Name)
+		sb.WriteString(`" = ?`)
+	}
+	sb.WriteString(` WHERE "`)
+	sb.WriteString(eqColName)
+	sb.WriteString(`" = ?;`)
+
+	sql := sb.String()
+	newMap := make(map[uint32]string, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[key] = sql
+	t.fastUpdatePlans.Store(&newMap)
+	return sql
 }
 
 func (col *colInfo) extractValue(base unsafe.Pointer) (any, bool, error) {

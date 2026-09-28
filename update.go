@@ -155,6 +155,20 @@ func (b UpdateBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, c
 	defer putExecOptions(opts)
 	opts.Args = opts.Args[:0]
 
+	if eq, ok := b.cond.(fastEqualCondition); ok && b.numSets <= 2 {
+		if sql := table.getFastUpdateEqualSQL(b.numSets, b.set0.col, b.set1.col, eq.equalCol()); sql != "" {
+			opts.Args = append(opts.Args, encodeValue(b.set0.val))
+			if b.numSets == 2 {
+				opts.Args = append(opts.Args, encodeValue(b.set1.val))
+			}
+			opts.Args = append(opts.Args, eq.equalArg())
+			if cache {
+				return sqlitex.Execute(conn, sql, opts)
+			}
+			return sqlitex.ExecuteTransient(conn, sql, opts)
+		}
+	}
+
 	qb := getQueryBuffer()
 	defer putQueryBuffer(qb)
 
