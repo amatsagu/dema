@@ -1674,4 +1674,157 @@ func TestOnConnectionHook(t *testing.T) {
 	}
 }
 
+type Server struct {
+	ID    int    `db:"id,pk"`
+	Title string `db:"title"`
+}
+
+var ServerField = struct {
+	ID    Field[Server, int]
+	Title Field[Server, string]
+}{
+	ID:    NewField[Server, int]("id"),
+	Title: NewField[Server, string]("title"),
+}
+
+func TestCount(t *testing.T) {
+	db, err := Open(":memory:", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.Table[Server]("servers", nil, nil, nil)
+	ctx := context.Background()
+
+	// 1. Verify exact SQL generation as requested by user
+	sql1 := db.Count[Server](nil).SQL()
+	if sql1 != `SELECT COUNT(*) FROM "servers";` {
+		t.Fatalf("expected %q, got %q", `SELECT COUNT(*) FROM "servers";`, sql1)
+	}
+
+	sql2 := db.Count[Server](ServerField.Title).Limit(20).SQL()
+	if sql2 != `SELECT COUNT("title") FROM "servers" LIMIT 20;` {
+		t.Fatalf("expected %q, got %q", `SELECT COUNT("title") FROM "servers" LIMIT 20;`, sql2)
+	}
+
+	// Also verify package-level Count
+	sqlPkg1 := Count[Server](nil).SQL()
+	if sqlPkg1 != `SELECT COUNT(*) FROM "servers";` {
+		t.Fatalf("expected %q, got %q", `SELECT COUNT(*) FROM "servers";`, sqlPkg1)
+	}
+
+	sqlPkg2 := Count[Server](ServerField.Title).Limit(20).SQL()
+	if sqlPkg2 != `SELECT COUNT("title") FROM "servers" LIMIT 20;` {
+		t.Fatalf("expected %q, got %q", `SELECT COUNT("title") FROM "servers" LIMIT 20;`, sqlPkg2)
+	}
+
+	// Verify no-args Count()
+	sqlNoArgs := db.Count[Server]().SQL()
+	if sqlNoArgs != `SELECT COUNT(*) FROM "servers";` {
+		t.Fatalf("expected %q, got %q", `SELECT COUNT(*) FROM "servers";`, sqlNoArgs)
+	}
+
+	// Verify string column name
+	sqlStrCol := db.Count[Server]("title").SQL()
+	if sqlStrCol != `SELECT COUNT("title") FROM "servers";` {
+		t.Fatalf("expected %q, got %q", `SELECT COUNT("title") FROM "servers";`, sqlStrCol)
+	}
+
+	// 2. Setup table in sqlite and insert test rows
+	err = db.RawExecute(ctx, `CREATE TABLE servers (id INTEGER PRIMARY KEY, title TEXT);`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty table count
+	cnt0, err := db.Count[Server](nil).Run(ctx, true)
+	if err != nil || cnt0 != 0 {
+		t.Fatalf("expected 0, got %v (%d)", err, cnt0)
+	}
+
+	// Insert 3 servers
+	err = db.Insert(ctx,
+		Server{ID: 1, Title: "prod-web-01"},
+		Server{ID: 2, Title: "prod-web-02"},
+		Server{ID: 3, Title: "staging-db-01"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Total count
+	cntTotal, err := db.Count[Server](nil).Run(ctx, true)
+	if err != nil || cntTotal != 3 {
+		t.Fatalf("expected 3, got %v (%d)", err, cntTotal)
+	}
+
+	// Count by field
+	cntTitle, err := db.Count[Server](ServerField.Title).Run(ctx, true)
+	if err != nil || cntTitle != 3 {
+		t.Fatalf("expected 3, got %v (%d)", err, cntTitle)
+	}
+
+	// Count with WHERE
+	cntWhere, err := db.Count[Server](nil).
+		Where(Equal(ServerField.ID, 2)).
+		Run(ctx, true)
+	if err != nil || cntWhere != 1 {
+		t.Fatalf("expected 1, got %v (%d)", err, cntWhere)
+	}
+
+	// Count with LIMIT
+	cntLimit, err := db.Count[Server](ServerField.Title).
+		Limit(20).
+		Run(ctx, true)
+	if err != nil || cntLimit != 3 {
+		t.Fatalf("expected 3, got %v (%d)", err, cntLimit)
+	}
+
+	// Count with Page
+	cntPage, err := db.Count[Server](ServerField.Title).
+		Page(1, 2).
+		Run(ctx, false)
+	if err != nil || cntPage != 3 {
+		t.Fatalf("expected 3, got %v (%d)", err, cntPage)
+	}
+
+	// Count on transaction
+	tx, err := db.Transaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txCount, err := tx.Count[Server](nil).Run(true)
+	if err != nil || txCount != 3 {
+		t.Fatalf("expected txCount 3, got %v (%d)", err, txCount)
+	}
+
+	txCountFiltered, err := tx.Count[Server](ServerField.Title).
+		Where(Equal(ServerField.Title, "prod-web-01")).
+		Run(false)
+	if err != nil || txCountFiltered != 1 {
+		t.Fatalf("expected txCountFiltered 1, got %v (%d)", err, txCountFiltered)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Package-level Count with db
+	cntPkg, err := Count[Server](db, nil).Run(ctx, true)
+	if err != nil || cntPkg != 3 {
+		t.Fatalf("expected cntPkg 3, got %v (%d)", err, cntPkg)
+	}
+
+	// Error case: unregistered table
+	type UnregisteredServer struct {
+		ID int
+	}
+	_, err = db.Count[UnregisteredServer]().Run(ctx, true)
+	if err == nil {
+		t.Fatalf("expected error on unregistered count")
+	}
+}
+
+
 

@@ -514,7 +514,7 @@ func (tx *Tx) UpdateRow(args ...any) error {
 
 type TxDeleteBuilder[T any] struct {
 	tx      *Tx
-	builder *DeleteBuilder[T]
+	builder DeleteBuilder[T]
 }
 
 func (tx *Tx) Delete[T any]() *TxDeleteBuilder[T] {
@@ -525,7 +525,7 @@ func (tx *Tx) Delete[T any]() *TxDeleteBuilder[T] {
 }
 
 func (b *TxDeleteBuilder[T]) Where(cond Condition) *TxDeleteBuilder[T] {
-	b.builder.Where(cond)
+	b.builder = b.builder.Where(cond)
 	return b
 }
 
@@ -583,4 +583,58 @@ func (tx *Tx) RawExecute(sql string, cache bool, args ...any) error {
 	}
 
 	return executeRawExecute(tx.conn, sql, cache, args...)
+}
+
+type TxCountBuilder[T any] struct {
+	tx      *Tx
+	builder CountBuilder[T]
+}
+
+func (tx *Tx) Count[T any](field ...any) *TxCountBuilder[T] {
+	return &TxCountBuilder[T]{
+		tx:      tx,
+		builder: tx.db.Count[T](field...),
+	}
+}
+
+func (b *TxCountBuilder[T]) Where(cond Condition) *TxCountBuilder[T] {
+	b.builder = b.builder.Where(cond)
+	return b
+}
+
+func (b *TxCountBuilder[T]) Limit(amount int) *TxCountBuilder[T] {
+	b.builder = b.builder.Limit(amount)
+	return b
+}
+
+func (b *TxCountBuilder[T]) Offset(amount int) *TxCountBuilder[T] {
+	b.builder = b.builder.Offset(amount)
+	return b
+}
+
+func (b *TxCountBuilder[T]) Page(current, size int) *TxCountBuilder[T] {
+	b.builder = b.builder.Page(current, size)
+	return b
+}
+
+func (b *TxCountBuilder[T]) SQL() string {
+	return b.builder.SQL()
+}
+
+func (b *TxCountBuilder[T]) Run(cache bool) (int64, error) {
+	if err := b.tx.checkActive(); err != nil {
+		return 0, err
+	}
+
+	table := b.builder.table
+	if table == nil {
+		typ, _ := getModelType[T]()
+		var err error
+		table, err = b.tx.db.getTableInfo(typ)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return b.builder.executeWithConn(b.tx.conn, table, cache)
 }

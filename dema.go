@@ -142,6 +142,7 @@ func (db *DB) Table[T any](name string, onInsert, onUpdate, onDelete func(*T) er
 	}
 
 	db.tables[typ] = info
+	globalTableNames.Store(typ, name)
 	newMap := make(map[reflect.Type]*tableInfo, len(db.tables))
 	for k, v := range db.tables {
 		newMap[k] = v

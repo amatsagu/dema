@@ -665,6 +665,224 @@ func BenchmarkUpsert_Transient_Dema(b *testing.B) {
 	runUpsert_Transient_Dema(b, db)
 }
 
+// --- Count Runners ---
+
+func runCount_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		var count int64
+		opts := &sqlitex.ExecOptions{
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				count = stmt.ColumnInt64(0)
+				return nil
+			},
+		}
+
+		if err := sqlitex.Execute(conn, `SELECT COUNT(*) FROM "users";`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+		if count == 0 {
+			b.Fatal("unexpected 0 count")
+		}
+	}
+}
+
+func runCount_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		count, err := db.Count[User](nil).Run(ctx, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if count == 0 {
+			b.Fatal("unexpected 0 count")
+		}
+	}
+}
+
+func runCount_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		var count int64
+		opts := &sqlitex.ExecOptions{
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				count = stmt.ColumnInt64(0)
+				return nil
+			},
+		}
+
+		if err := sqlitex.ExecuteTransient(conn, `SELECT COUNT(*) FROM "users";`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+		if count == 0 {
+			b.Fatal("unexpected 0 count")
+		}
+	}
+}
+
+func runCount_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		count, err := db.Count[User](nil).Run(ctx, false)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if count == 0 {
+			b.Fatal("unexpected 0 count")
+		}
+	}
+}
+
+func BenchmarkCount_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runCount_Cached_Raw(b, pool)
+}
+
+func BenchmarkCount_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runCount_Cached_Dema(b, db)
+}
+
+func BenchmarkCount_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runCount_Transient_Raw(b, pool)
+}
+
+func BenchmarkCount_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runCount_Transient_Dema(b, db)
+}
+
+// --- Delete Runners ---
+
+func runDelete_Cached_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		opts := &sqlitex.ExecOptions{
+			Args: []any{int64(999999)},
+		}
+		if err := sqlitex.Execute(conn, `DELETE FROM "users" WHERE id = ?;`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+	}
+}
+
+func runDelete_Cached_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		err := db.Delete[User]().
+			Where(Equal(UserField.ID, 999999)).
+			Run(ctx, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func runDelete_Transient_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		opts := &sqlitex.ExecOptions{
+			Args: []any{int64(999999)},
+		}
+		if err := sqlitex.ExecuteTransient(conn, `DELETE FROM "users" WHERE id = ?;`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+	}
+}
+
+func runDelete_Transient_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		err := db.Delete[User]().
+			Where(Equal(UserField.ID, 999999)).
+			Run(ctx, false)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDelete_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runDelete_Cached_Raw(b, pool)
+}
+
+func BenchmarkDelete_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runDelete_Cached_Dema(b, db)
+}
+
+func BenchmarkDelete_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runDelete_Transient_Raw(b, pool)
+}
+
+func BenchmarkDelete_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runDelete_Transient_Dema(b, db)
+}
+
 // --- Backward-Compatible Aliases ---
 
 func BenchmarkSelectByID_Raw(b *testing.B)    { BenchmarkSelectByID_Cached_Raw(b) }
@@ -677,3 +895,7 @@ func BenchmarkUpdate_Raw(b *testing.B)        { BenchmarkUpdate_Cached_Raw(b) }
 func BenchmarkUpdate_Dema(b *testing.B)       { BenchmarkUpdate_Cached_Dema(b) }
 func BenchmarkUpsert_Raw(b *testing.B)        { BenchmarkUpsert_Cached_Raw(b) }
 func BenchmarkUpsert_Dema(b *testing.B)       { BenchmarkUpsert_Cached_Dema(b) }
+func BenchmarkCount_Raw(b *testing.B)         { BenchmarkCount_Cached_Raw(b) }
+func BenchmarkCount_Dema(b *testing.B)        { BenchmarkCount_Cached_Dema(b) }
+func BenchmarkDelete_Raw(b *testing.B)        { BenchmarkDelete_Cached_Raw(b) }
+func BenchmarkDelete_Dema(b *testing.B)       { BenchmarkDelete_Cached_Dema(b) }

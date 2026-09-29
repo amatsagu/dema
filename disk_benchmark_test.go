@@ -148,3 +148,56 @@ func BenchmarkDisk_Upsert_Transient_Dema(b *testing.B) {
 	defer db.Close()
 	runUpsert_Transient_Dema(b, db)
 }
+
+// --- Disk Count ---
+
+func BenchmarkDisk_Count_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDiskDB(b)
+	defer db.Close()
+	runCount_Cached_Raw(b, pool)
+}
+
+func BenchmarkDisk_Count_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDiskDB(b)
+	defer db.Close()
+	runCount_Cached_Dema(b, db)
+}
+
+func BenchmarkDisk_Count_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDiskDB(b)
+	defer db.Close()
+	runCount_Transient_Raw(b, pool)
+}
+
+func BenchmarkDisk_Count_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDiskDB(b)
+	defer db.Close()
+	runCount_Transient_Dema(b, db)
+}
+
+// --- Disk Delete ---
+
+func BenchmarkDisk_Delete_Cached_Raw(b *testing.B) {
+	db, pool := setupBenchDiskDB(b)
+	defer db.Close()
+	runDelete_Cached_Raw(b, pool)
+}
+
+func BenchmarkDisk_Delete_Cached_Dema(b *testing.B) {
+	db, _ := setupBenchDiskDB(b)
+	defer db.Close()
+	runDelete_Cached_Dema(b, db)
+}
+
+func BenchmarkDisk_Delete_Transient_Raw(b *testing.B) {
+	db, pool := setupBenchDiskDB(b)
+	defer db.Close()
+	runDelete_Transient_Raw(b, pool)
+}
+
+func BenchmarkDisk_Delete_Transient_Dema(b *testing.B) {
+	db, _ := setupBenchDiskDB(b)
+	defer db.Close()
+	runDelete_Transient_Dema(b, db)
+}
+

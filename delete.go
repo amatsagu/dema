@@ -14,24 +14,24 @@ type DeleteBuilder[T any] struct {
 	cond  Condition
 }
 
-func (db *DB) Delete[T any]() *DeleteBuilder[T] {
+func (db *DB) Delete[T any]() DeleteBuilder[T] {
 	typ, _ := getModelType[T]()
 	var table *tableInfo
 	if typ != nil {
 		table = db.tableInfo(typ)
 	}
-	return &DeleteBuilder[T]{
+	return DeleteBuilder[T]{
 		db:    db,
 		table: table,
 	}
 }
 
-func (b *DeleteBuilder[T]) Where(cond Condition) *DeleteBuilder[T] {
+func (b DeleteBuilder[T]) Where(cond Condition) DeleteBuilder[T] {
 	b.cond = cond
 	return b
 }
 
-func (b *DeleteBuilder[T]) Run(ctx context.Context, cache bool) error {
+func (b DeleteBuilder[T]) Run(ctx context.Context, cache bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -74,9 +74,29 @@ func (b *DeleteBuilder[T]) Run(ctx context.Context, cache bool) error {
 	return b.executeWithConn(conn, table, cache)
 }
 
-func (b *DeleteBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, cache bool) error {
+func (b DeleteBuilder[T]) executeWithConn(conn *sqlite.Conn, table *tableInfo, cache bool) error {
 	opts := getExecOptions()
 	opts.Args = opts.Args[:0]
+
+	if eq, ok := b.cond.(fastEqualCondition); ok {
+		if col := table.colByName[eq.equalCol()]; col != nil && col.deleteSQL != "" {
+			opts.Args = append(opts.Args, eq.equalArg())
+			var err error
+			if cache {
+				err = sqlitex.Execute(conn, col.deleteSQL, opts)
+			} else {
+				err = sqlitex.ExecuteTransient(conn, col.deleteSQL, opts)
+			}
+			putExecOptions(opts)
+			if err != nil {
+				return lumo.WrapError(err).
+					Include("dema_table", table.name).
+					Include("dema_operation", "DELETE").
+					Include("dema_expected", "successful execution")
+			}
+			return nil
+		}
+	}
 
 	qb := getQueryBuffer()
 	qb.WriteString(`DELETE FROM "`)

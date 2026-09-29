@@ -22,6 +22,8 @@ type colInfo struct {
 	fieldName      string
 	equalSQL       string
 	equalLimit1SQL string
+	countSQL       string
+	deleteSQL      string
 	index          []int
 	offset         uintptr
 	colIdx         int
@@ -63,6 +65,7 @@ type tableInfo struct {
 	onDelete          func(any) error
 	name              string
 	defaultSelectSQL  string
+	defaultCountSQL   string
 	defaultInsertSQL  string
 	defaultUpsertSQL  string
 	defaultUpdateSQL  string
@@ -225,10 +228,13 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 	sb.WriteString(tableName)
 	sb.WriteString(`"`)
 	info.defaultSelectSQL = sb.String()
+	info.defaultCountSQL = `SELECT COUNT(*) FROM "` + tableName + `";`
 
 	for _, col := range cols {
 		col.equalSQL = info.defaultSelectSQL + ` WHERE "` + col.name + `" = ?`
 		col.equalLimit1SQL = info.defaultSelectSQL + ` WHERE "` + col.name + `" = ? LIMIT 1`
+		col.countSQL = `SELECT COUNT("` + col.name + `") FROM "` + tableName + `";`
+		col.deleteSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ?;`
 	}
 
 	allMask := (uint64(1) << len(cols)) - 1
@@ -275,6 +281,47 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 		}
 	}
 
+	return info, nil
+}
+
+var (
+	adHocTableCache  sync.Map
+	globalTableNames sync.Map
+)
+
+func getAdHocTableInfo(typ reflect.Type) (*tableInfo, error) {
+	if typ == nil {
+		return nil, lumo.WrapString("nil model type").
+			Include("dema_table", "").
+			Include("dema_operation", "LOOKUP").
+			Include("dema_expected", "valid struct type")
+	}
+	if v, ok := adHocTableCache.Load(typ); ok {
+		return v.(*tableInfo), nil
+	}
+	cols := inspectStruct(typ, nil, 0)
+	var tableName string
+	if name, ok := globalTableNames.Load(typ); ok {
+		tableName = name.(string)
+	} else {
+		tableName = strings.ToLower(typ.Name())
+		if !strings.HasSuffix(tableName, "s") {
+			tableName += "s"
+		}
+	}
+	info := &tableInfo{
+		name:            tableName,
+		typ:             typ,
+		allCols:         cols,
+		colByName:       make(map[string]*colInfo, len(cols)),
+		defaultCountSQL: `SELECT COUNT(*) FROM "` + tableName + `";`,
+	}
+	for _, col := range cols {
+		info.colByName[col.name] = col
+		col.countSQL = `SELECT COUNT("` + col.name + `") FROM "` + tableName + `";`
+		col.deleteSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ?;`
+	}
+	adHocTableCache.Store(typ, info)
 	return info, nil
 }
 

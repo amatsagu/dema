@@ -106,6 +106,18 @@ row, _ := db.Select[User]().                                        // single lo
 
 `cache` (second arg to `Run`) toggles SQLite prepared statement caching - `true` for repeated queries, `false` for one-off.
 
+## Count
+
+```go
+n, _ := db.Count[User]().Run(ctx, true)                              // SELECT COUNT(*) FROM "users";
+n, _ := db.Count[User](nil).Run(ctx, true)                           // same: COUNT(*)
+n, _ := db.Count[User](UserName).Limit(20).Run(ctx, true)           // SELECT COUNT("name") FROM "users" LIMIT 20;
+n, _ := db.Count[User]().Where(dema.Greater(UserAge, 18)).Run(ctx, true)
+
+// In transactions (no ctx parameter)
+n, _ := tx.Count[User](UserName).Run(true)
+```
+
 ## Insert & Upsert
 
 ```go
@@ -154,7 +166,7 @@ tx.Delete[User]().Where(dema.Equal(UserID, 10)).Run(false)
 tx.Commit()
 ```
 
-Tx mirrors DB: `Select`, `Insert`, `Upsert`, `Update`, `UpdateRow`, `Delete`, `RawQuery`, `RawExecute`
+Tx mirrors DB: `Select`, `Count`, `Insert`, `Upsert`, `Update`, `UpdateRow`, `Delete`, `RawQuery`, `RawExecute`
 
 ## Raw SQL
 
