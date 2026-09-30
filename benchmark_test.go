@@ -883,6 +883,289 @@ func BenchmarkDelete_Transient_Dema(b *testing.B) {
 	runDelete_Transient_Dema(b, db)
 }
 
+// --- Returning Runners ---
+
+func runInsert_Returning_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	var i int
+	for b.Loop() {
+		i++
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		var u User
+		opts := &sqlitex.ExecOptions{
+			Args: []any{nil, fmt.Sprintf("BenchRaw-%d", i), int64(30), 95.5, true},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				if !stmt.ColumnIsNull(0) {
+					bio := stmt.ColumnText(0)
+					u.Bio = &bio
+				}
+				u.Name = stmt.ColumnText(1)
+				u.Age = int(stmt.ColumnInt64(2))
+				u.Score = stmt.ColumnFloat(3)
+				u.ID = uint32(stmt.ColumnInt64(4))
+				u.Active = stmt.ColumnBool(5)
+				return nil
+			},
+		}
+		if err := sqlitex.Execute(conn, `INSERT INTO users (bio, surname, age, score, active) VALUES (?, ?, ?, ?, ?) RETURNING bio, surname, age, score, id, active;`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+	}
+}
+
+func runInsert_Returning_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	var i int
+	for b.Loop() {
+		i++
+		u := User{
+			Name:   fmt.Sprintf("BenchDema-%d", i),
+			Age:    30,
+			Active: true,
+			Score:  95.5,
+		}
+		res, err := db.InsertInto[User](u).Returning().Run(ctx, true)
+		if err != nil || len(res) == 0 {
+			b.Fatalf("Insert Returning failed: %v", err)
+		}
+	}
+}
+
+func runInsert_Then_Select_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	var i int
+	for b.Loop() {
+		i++
+		name := fmt.Sprintf("BenchRaw-%d", i)
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		insertOpts := &sqlitex.ExecOptions{
+			Args: []any{nil, name, int64(30), 95.5, true},
+		}
+		if err := sqlitex.Execute(conn, "INSERT INTO users (bio, surname, age, score, active) VALUES (?, ?, ?, ?, ?);", insertOpts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+
+		conn, err = pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		var u User
+		selectOpts := &sqlitex.ExecOptions{
+			Args: []any{name},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				if !stmt.ColumnIsNull(0) {
+					bio := stmt.ColumnText(0)
+					u.Bio = &bio
+				}
+				u.Name = stmt.ColumnText(1)
+				u.Age = int(stmt.ColumnInt64(2))
+				u.Score = stmt.ColumnFloat(3)
+				u.ID = uint32(stmt.ColumnInt64(4))
+				u.Active = stmt.ColumnBool(5)
+				return nil
+			},
+		}
+		if err := sqlitex.Execute(conn, "SELECT bio, surname, age, score, id, active FROM users WHERE surname = ? LIMIT 1;", selectOpts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+	}
+}
+
+func runInsert_Then_Select_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	var i int
+	for b.Loop() {
+		i++
+		name := fmt.Sprintf("BenchDema-%d", i)
+		u := User{
+			Name:   name,
+			Age:    30,
+			Active: true,
+			Score:  95.5,
+		}
+		if err := db.Insert(ctx, u, true); err != nil {
+			b.Fatal(err)
+		}
+		res, err := db.Select[User]().
+			Where(Equal(UserField.Name, name)).
+			Limit(1).
+			Run(ctx, true)
+		if err != nil || len(res) == 0 {
+			b.Fatalf("Select after insert failed: %v", err)
+		}
+	}
+}
+
+func runUpdate_Returning_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		var u User
+		opts := &sqlitex.ExecOptions{
+			Args: []any{"UpdatedRaw", int64(33), int64(1)},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				if !stmt.ColumnIsNull(0) {
+					bio := stmt.ColumnText(0)
+					u.Bio = &bio
+				}
+				u.Name = stmt.ColumnText(1)
+				u.Age = int(stmt.ColumnInt64(2))
+				u.Score = stmt.ColumnFloat(3)
+				u.ID = uint32(stmt.ColumnInt64(4))
+				u.Active = stmt.ColumnBool(5)
+				return nil
+			},
+		}
+		if err := sqlitex.Execute(conn, `UPDATE users SET surname = ?, age = ? WHERE id = ? RETURNING bio, surname, age, score, id, active;`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+	}
+}
+
+func runUpdate_Returning_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		res, err := db.Update[User]().
+			Set(UserField.Name, "UpdatedDema").
+			Set(UserField.Age, 33).
+			Where(Equal(UserField.ID, 1)).
+			Returning().
+			Run(ctx, true)
+		if err != nil || len(res) == 0 {
+			b.Fatalf("Update Returning failed: %v", err)
+		}
+	}
+}
+
+func runDelete_Returning_Raw(b *testing.B, pool *sqlitex.Pool) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		conn, err := pool.Take(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		var u User
+		opts := &sqlitex.ExecOptions{
+			Args: []any{int64(999999)},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				u.ID = uint32(stmt.ColumnInt64(0))
+				return nil
+			},
+		}
+		if err := sqlitex.Execute(conn, `DELETE FROM "users" WHERE id = ? RETURNING id;`, opts); err != nil {
+			pool.Put(conn)
+			b.Fatal(err)
+		}
+		pool.Put(conn)
+	}
+}
+
+func runDelete_Returning_Dema(b *testing.B, db *DB) {
+	b.Helper()
+	ctx := context.Background()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, err := db.Delete[User]().
+			Where(Equal(UserField.ID, 999999)).
+			Returning(UserField.ID).
+			Run(ctx, true)
+		if err != nil {
+			b.Fatalf("Delete Returning failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkInsert_Returning_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Returning_Raw(b, pool)
+}
+
+func BenchmarkInsert_Returning_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Returning_Dema(b, db)
+}
+
+func BenchmarkInsert_Then_Select_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Then_Select_Raw(b, pool)
+}
+
+func BenchmarkInsert_Then_Select_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runInsert_Then_Select_Dema(b, db)
+}
+
+func BenchmarkUpdate_Returning_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runUpdate_Returning_Raw(b, pool)
+}
+
+func BenchmarkUpdate_Returning_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runUpdate_Returning_Dema(b, db)
+}
+
+func BenchmarkDelete_Returning_Raw(b *testing.B) {
+	db, pool := setupBenchDB(b)
+	defer db.Close()
+	runDelete_Returning_Raw(b, pool)
+}
+
+func BenchmarkDelete_Returning_Dema(b *testing.B) {
+	db, _ := setupBenchDB(b)
+	defer db.Close()
+	runDelete_Returning_Dema(b, db)
+}
+
 // --- Backward-Compatible Aliases ---
 
 func BenchmarkSelectByID_Raw(b *testing.B)    { BenchmarkSelectByID_Cached_Raw(b) }
