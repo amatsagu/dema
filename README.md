@@ -144,6 +144,18 @@ db.Delete[User]().Where(dema.Equal(UserID, 1)).Run(ctx, true)
 // WHERE is always required - prevents accidental full-table deletes
 ```
 
+## Returning
+
+`Returning(...)` retrieves modified rows (`[]T`) from `InsertInto`, `Update`, and `Delete`. Pass no args for all columns, or specific fields:
+
+```go
+created, _ := db.InsertInto[User](u1).Returning().Run(ctx, true)     // returns DB-generated ID
+updated, _ := db.Update[User]().Set(UserAge, 31).
+    Where(dema.Equal(UserID, 1)).Returning().Run(ctx, true)
+deleted, _ := db.Delete[User]().Where(dema.Equal(UserID, 1)).
+    Returning(UserID, UserName).Run(ctx, true)
+```
+
 ## Transactions
 
 All operations share a single connection; context is bound at creation.
@@ -166,7 +178,7 @@ tx.Delete[User]().Where(dema.Equal(UserID, 10)).Run(false)
 tx.Commit()
 ```
 
-Tx mirrors DB: `Select`, `Count`, `Insert`, `Upsert`, `Update`, `UpdateRow`, `Delete`, `RawQuery`, `RawExecute`
+Tx mirrors DB: `Select`, `Count`, `Insert`, `InsertInto`, `Upsert`, `Update`, `UpdateRow`, `Delete`, `RawQuery`, `RawExecute`
 
 ## Raw SQL
 
