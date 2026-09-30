@@ -435,6 +435,59 @@ func (b *TxUpdateBuilder[T]) Run(cache bool) error {
 	return b.builder.executeWithConn(b.tx.conn, table, cache)
 }
 
+func (b *TxUpdateBuilder[T]) Returning(fields ...any) *TxUpdateReturningBuilder[T] {
+	return &TxUpdateReturningBuilder[T]{
+		tx:      b.tx,
+		builder: b.builder.Returning(fields...),
+	}
+}
+
+type TxUpdateReturningBuilder[T any] struct {
+	tx      *Tx
+	builder UpdateReturningBuilder[T]
+}
+
+func (b *TxUpdateReturningBuilder[T]) Set[V any](field Field[T, V], val V) *TxUpdateReturningBuilder[T] {
+	b.builder = b.builder.Set(field, val)
+	return b
+}
+
+func (b *TxUpdateReturningBuilder[T]) Where(cond Condition) *TxUpdateReturningBuilder[T] {
+	b.builder = b.builder.Where(cond)
+	return b
+}
+
+func (b *TxUpdateReturningBuilder[T]) Returning(fields ...any) *TxUpdateReturningBuilder[T] {
+	b.builder = b.builder.Returning(fields...)
+	return b
+}
+
+func (b *TxUpdateReturningBuilder[T]) Run(cache bool) ([]T, error) {
+	if err := b.tx.checkActive(); err != nil {
+		return nil, err
+	}
+	table := b.builder.builder.table
+	typ, isPtrModel := getModelType[T]()
+	if table == nil {
+		var err error
+		table, err = b.tx.db.getTableInfo(typ)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if table.onUpdate != nil {
+		if err := table.onUpdate(nil); err != nil {
+			return nil, lumo.WrapError(err).
+				Include("dema_table", table.name).
+				Include("dema_operation", "UPDATE").
+				Include("dema_expected", "onUpdate hook validation")
+		}
+	}
+
+	return b.builder.executeWithConn(b.tx.conn, table, isPtrModel, cache)
+}
+
 func (tx *Tx) UpdateRow(args ...any) error {
 	if err := tx.checkActive(); err != nil {
 		return err
@@ -557,6 +610,119 @@ func (b *TxDeleteBuilder[T]) Run(cache bool) error {
 	}
 
 	return b.builder.executeWithConn(b.tx.conn, table, cache)
+}
+
+func (b *TxDeleteBuilder[T]) Returning(fields ...any) *TxDeleteReturningBuilder[T] {
+	return &TxDeleteReturningBuilder[T]{
+		tx:      b.tx,
+		builder: b.builder.Returning(fields...),
+	}
+}
+
+type TxDeleteReturningBuilder[T any] struct {
+	tx      *Tx
+	builder DeleteReturningBuilder[T]
+}
+
+func (b *TxDeleteReturningBuilder[T]) Where(cond Condition) *TxDeleteReturningBuilder[T] {
+	b.builder = b.builder.Where(cond)
+	return b
+}
+
+func (b *TxDeleteReturningBuilder[T]) Returning(fields ...any) *TxDeleteReturningBuilder[T] {
+	b.builder = b.builder.Returning(fields...)
+	return b
+}
+
+func (b *TxDeleteReturningBuilder[T]) Run(cache bool) ([]T, error) {
+	if err := b.tx.checkActive(); err != nil {
+		return nil, err
+	}
+	table := b.builder.builder.table
+	typ, isPtrModel := getModelType[T]()
+	if table == nil {
+		var err error
+		table, err = b.tx.db.getTableInfo(typ)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if table.onDelete != nil {
+		if err := table.onDelete(nil); err != nil {
+			return nil, lumo.WrapError(err).
+				Include("dema_table", table.name).
+				Include("dema_operation", "DELETE").
+				Include("dema_expected", "onDelete hook validation")
+		}
+	}
+
+	return b.builder.executeWithConn(b.tx.conn, table, isPtrModel, cache)
+}
+
+func (tx *Tx) InsertInto[T any](rows ...T) TxInsertBuilder[T] {
+	return TxInsertBuilder[T]{
+		tx:      tx,
+		builder: tx.db.InsertInto[T](rows...),
+	}
+}
+
+type TxInsertBuilder[T any] struct {
+	tx      *Tx
+	builder InsertBuilder[T]
+}
+
+func (b TxInsertBuilder[T]) Values(rows ...T) TxInsertBuilder[T] {
+	b.builder = b.builder.Values(rows...)
+	return b
+}
+
+func (b TxInsertBuilder[T]) Returning(fields ...any) TxInsertReturningBuilder[T] {
+	return TxInsertReturningBuilder[T]{
+		tx:      b.tx,
+		builder: b.builder.Returning(fields...),
+	}
+}
+
+func (b TxInsertBuilder[T]) Run(cache bool) error {
+	if err := b.tx.checkActive(); err != nil {
+		return err
+	}
+	if len(b.builder.rows) == 0 {
+		return nil
+	}
+	return b.tx.Insert(b.builder.rows, cache)
+}
+
+type TxInsertReturningBuilder[T any] struct {
+	tx      *Tx
+	builder InsertReturningBuilder[T]
+}
+
+func (b TxInsertReturningBuilder[T]) Values(rows ...T) TxInsertReturningBuilder[T] {
+	b.builder = b.builder.Values(rows...)
+	return b
+}
+
+func (b TxInsertReturningBuilder[T]) Returning(fields ...any) TxInsertReturningBuilder[T] {
+	b.builder = b.builder.Returning(fields...)
+	return b
+}
+
+func (b TxInsertReturningBuilder[T]) Run(cache bool) ([]T, error) {
+	if err := b.tx.checkActive(); err != nil {
+		return nil, err
+	}
+	table := b.builder.builder.table
+	typ, isPtrModel := getModelType[T]()
+	if table == nil {
+		var err error
+		table, err = b.tx.db.getTableInfo(typ)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return b.builder.executeWithConn(b.tx.conn, table, isPtrModel, cache)
 }
 
 func (tx *Tx) RawQuery[T any](sql string, cache bool, args ...any) ([]T, error) {

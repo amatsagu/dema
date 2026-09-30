@@ -1826,5 +1826,181 @@ func TestCount(t *testing.T) {
 	}
 }
 
+func TestReturning(t *testing.T) {
+	db, err := Open(":memory:", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
+	ctx := context.Background()
+	conn, err := db.pool.Take(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sqlitex.ExecuteTransient(conn, `CREATE TABLE users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		surname TEXT,
+		age INTEGER,
+		bio TEXT,
+		score REAL,
+		active INTEGER
+	);`, nil)
+	db.pool.Put(conn)
 
+	db.Table[User]("users", nil, nil, nil)
+
+	// 1. InsertInto with Returning
+	u1 := User{Name: "Alice", Age: 30, Score: 95.5, Active: true}
+	inserted, err := db.InsertInto[User](u1).Returning().Run(ctx, true)
+	if err != nil {
+		t.Fatalf("InsertInto Returning failed: %v", err)
+	}
+	if len(inserted) != 1 || inserted[0].ID == 0 || inserted[0].Name != "Alice" {
+		t.Fatalf("unexpected InsertInto Returning output: %+v", inserted)
+	}
+	aliceID := inserted[0].ID
+
+	// Check SQL output
+	insertSQL, err := db.InsertInto[User](u1).Returning().SQL()
+	if err != nil || !strings.Contains(insertSQL, "RETURNING") {
+		t.Fatalf("unexpected insert SQL: %v, %s", err, insertSQL)
+	}
+
+	// Multi-row InsertInto with Values and Returning
+	u2 := User{Name: "Bob", Age: 40}
+	u3 := User{Name: "Charlie", Age: 50}
+	insertedMulti, err := db.InsertInto[User]().Values(u2, u3).Returning().Run(ctx, true)
+	if err != nil {
+		t.Fatalf("multi InsertInto Returning failed: %v", err)
+	}
+	if len(insertedMulti) != 2 || insertedMulti[0].Name != "Bob" || insertedMulti[1].Name != "Charlie" {
+		t.Fatalf("unexpected multi insert output: %+v", insertedMulti)
+	}
+
+	// 2. Update with Returning (all columns)
+	updated, err := db.Update[User]().
+		Set(UserField.Age, 35).
+		Where(Equal(UserField.ID, aliceID)).
+		Returning().
+		Run(ctx, true)
+	if err != nil {
+		t.Fatalf("Update Returning failed: %v", err)
+	}
+	if len(updated) != 1 || updated[0].Age != 35 || updated[0].Name != "Alice" {
+		t.Fatalf("unexpected update returning: %+v", updated)
+	}
+
+	// Update with specific returning fields
+	updatedPartial, err := db.Update[User]().
+		Set(UserField.Age, 36).
+		Where(Equal(UserField.ID, aliceID)).
+		Returning(UserField.Age).
+		Run(ctx, true)
+	if err != nil {
+		t.Fatalf("Update partial Returning failed: %v", err)
+	}
+	if len(updatedPartial) != 1 || updatedPartial[0].Age != 36 || updatedPartial[0].Name != "" {
+		t.Fatalf("unexpected partial update returning: %+v", updatedPartial)
+	}
+
+	// Check update SQL output
+	updateSQL, err := db.Update[User]().
+		Set(UserField.Age, 36).
+		Where(Equal(UserField.ID, aliceID)).
+		Returning().
+		SQL()
+	if err != nil || !strings.Contains(updateSQL, "RETURNING") {
+		t.Fatalf("unexpected update SQL: %v, %s", err, updateSQL)
+	}
+
+	// 3. Delete with Returning
+	deleted, err := db.Delete[User]().
+		Where(Equal(UserField.ID, aliceID)).
+		Returning().
+		Run(ctx, true)
+	if err != nil {
+		t.Fatalf("Delete Returning failed: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0].ID != aliceID || deleted[0].Name != "Alice" {
+		t.Fatalf("unexpected delete returning: %+v", deleted)
+	}
+
+	// Delete with specific returning fields
+	deletedPartial, err := db.Delete[User]().
+		Where(Equal(UserField.ID, insertedMulti[0].ID)).
+		Returning(UserField.ID).
+		Run(ctx, true)
+	if err != nil {
+		t.Fatalf("Delete partial Returning failed: %v", err)
+	}
+	if len(deletedPartial) != 1 || deletedPartial[0].ID != insertedMulti[0].ID || deletedPartial[0].Name != "" {
+		t.Fatalf("unexpected partial delete returning: %+v", deletedPartial)
+	}
+
+	// Check delete SQL output
+	deleteSQL, err := db.Delete[User]().
+		Where(Equal(UserField.ID, 999)).
+		Returning().
+		SQL()
+	if err != nil || !strings.Contains(deleteSQL, "RETURNING") {
+		t.Fatalf("unexpected delete SQL: %v, %s", err, deleteSQL)
+	}
+
+	// 4. Transactions with Returning
+	tx, err := db.Transaction(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txInserted, err := tx.InsertInto[User](User{Name: "TxAlice", Age: 22}).Returning().Run(true)
+	if err != nil || len(txInserted) != 1 || txInserted[0].Name != "TxAlice" {
+		t.Fatalf("tx InsertInto Returning failed: %v, %+v", err, txInserted)
+	}
+
+	txUpdated, err := tx.Update[User]().
+		Set(UserField.Age, 23).
+		Where(Equal(UserField.ID, txInserted[0].ID)).
+		Returning().
+		Run(true)
+	if err != nil || len(txUpdated) != 1 || txUpdated[0].Age != 23 {
+		t.Fatalf("tx Update Returning failed: %v, %+v", err, txUpdated)
+	}
+
+	txDeleted, err := tx.Delete[User]().
+		Where(Equal(UserField.ID, txInserted[0].ID)).
+		Returning().
+		Run(true)
+	if err != nil || len(txDeleted) != 1 || txDeleted[0].ID != txInserted[0].ID {
+		t.Fatalf("tx Delete Returning failed: %v, %+v", err, txDeleted)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 5. Package-level Insert Returning
+	pkgInserted, err := Insert[User](db, User{Name: "PkgUser", Age: 28}).Returning().Run(ctx, true)
+	if err != nil || len(pkgInserted) != 1 || pkgInserted[0].Name != "PkgUser" {
+		t.Fatalf("package-level Insert Returning failed: %v, %+v", err, pkgInserted)
+	}
+
+	// 6. Error cases
+	// Update without WHERE
+	_, err = db.Update[User]().Set(UserField.Age, 10).Returning().Run(ctx, true)
+	if err == nil {
+		t.Fatal("expected error on Update Returning without WHERE")
+	}
+
+	// Delete without WHERE
+	_, err = db.Delete[User]().Returning().Run(ctx, true)
+	if err == nil {
+		t.Fatal("expected error on Delete Returning without WHERE")
+	}
+
+	// Invalid column in Returning
+	_, err = db.Delete[User]().Where(Equal(UserField.ID, 1)).Returning("nonexistent_col").Run(ctx, true)
+	if err == nil {
+		t.Fatal("expected error on invalid column in Returning")
+	}
+}

@@ -768,35 +768,35 @@ func TestMoreRemainingBranches(t *testing.T) {
 }
 
 type AllTypesModel struct {
-	PInt      *int     `db:"p_int,omitzero"`
-	PInt8     *int8    `db:"p_int8,omitzero"`
-	PInt16    *int16   `db:"p_int16,omitzero"`
-	PInt32    *int32   `db:"p_int32,omitzero"`
-	PInt64    *int64   `db:"p_int64,omitzero"`
-	PUint     *uint    `db:"p_uint,omitzero"`
-	PUint8    *uint8   `db:"p_uint8,omitzero"`
-	PUint16   *uint16  `db:"p_uint16,omitzero"`
-	PUint32   *uint32  `db:"p_uint32,omitzero"`
-	PUint64   *uint64  `db:"p_uint64,omitzero"`
-	PFloat32  *float32 `db:"p_float32,omitzero"`
-	PFloat64  *float64 `db:"p_float64,omitzero"`
-	PBool     *bool    `db:"p_bool,omitzero"`
-	PStr      *string  `db:"p_str,omitzero"`
-	Str       string   `db:"str,omitzero"`
-	ID        int      `db:"id,pk"`
-	F64       float64  `db:"f64,omitzero"`
-	I64       int64    `db:"i64,omitzero"`
-	U64       uint64   `db:"u64,omitzero"`
-	I         int      `db:"i,omitzero"`
-	U         uint     `db:"u,omitzero"`
-	I32       int32    `db:"i32,omitzero"`
-	U32       uint32   `db:"u32,omitzero"`
-	F32       float32  `db:"f32,omitzero"`
-	I16       int16    `db:"i16,omitzero"`
-	U16       uint16   `db:"u16,omitzero"`
-	I8        int8     `db:"i8,omitzero"`
-	U8        uint8    `db:"u8,omitzero"`
-	B         bool     `db:"b,omitzero"`
+	PInt     *int     `db:"p_int,omitzero"`
+	PInt8    *int8    `db:"p_int8,omitzero"`
+	PInt16   *int16   `db:"p_int16,omitzero"`
+	PInt32   *int32   `db:"p_int32,omitzero"`
+	PInt64   *int64   `db:"p_int64,omitzero"`
+	PUint    *uint    `db:"p_uint,omitzero"`
+	PUint8   *uint8   `db:"p_uint8,omitzero"`
+	PUint16  *uint16  `db:"p_uint16,omitzero"`
+	PUint32  *uint32  `db:"p_uint32,omitzero"`
+	PUint64  *uint64  `db:"p_uint64,omitzero"`
+	PFloat32 *float32 `db:"p_float32,omitzero"`
+	PFloat64 *float64 `db:"p_float64,omitzero"`
+	PBool    *bool    `db:"p_bool,omitzero"`
+	PStr     *string  `db:"p_str,omitzero"`
+	Str      string   `db:"str,omitzero"`
+	ID       int      `db:"id,pk"`
+	F64      float64  `db:"f64,omitzero"`
+	I64      int64    `db:"i64,omitzero"`
+	U64      uint64   `db:"u64,omitzero"`
+	I        int      `db:"i,omitzero"`
+	U        uint     `db:"u,omitzero"`
+	I32      int32    `db:"i32,omitzero"`
+	U32      uint32   `db:"u32,omitzero"`
+	F32      float32  `db:"f32,omitzero"`
+	I16      int16    `db:"i16,omitzero"`
+	U16      uint16   `db:"u16,omitzero"`
+	I8       int8     `db:"i8,omitzero"`
+	U8       uint8    `db:"u8,omitzero"`
+	B        bool     `db:"b,omitzero"`
 }
 
 func TestAllTypeScanningAndHooks(t *testing.T) {
@@ -840,9 +840,20 @@ func TestAllTypeScanningAndHooks(t *testing.T) {
 	}
 
 	// Insert non-zero values
-	pi := 1; pi8 := int8(2); pi16 := int16(3); pi32 := int32(4); pi64 := int64(5)
-	pu := uint(6); pu8 := uint8(7); pu16 := uint16(8); pu32 := uint32(9); pu64 := uint64(10)
-	pf32 := float32(11.5); pf64 := 12.5; pb := true; ps := "ptrstr"
+	pi := 1
+	pi8 := int8(2)
+	pi16 := int16(3)
+	pi32 := int32(4)
+	pi64 := int64(5)
+	pu := uint(6)
+	pu8 := uint8(7)
+	pu16 := uint16(8)
+	pu32 := uint32(9)
+	pu64 := uint64(10)
+	pf32 := float32(11.5)
+	pf64 := 12.5
+	pb := true
+	ps := "ptrstr"
 
 	nz := AllTypesModel{
 		ID: 2, PInt: &pi, PInt8: &pi8, PInt16: &pi16, PInt32: &pi32, PInt64: &pi64,
@@ -906,4 +917,3 @@ func TestAllTypeScanningAndHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-

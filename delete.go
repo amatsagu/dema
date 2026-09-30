@@ -31,6 +31,27 @@ func (b DeleteBuilder[T]) Where(cond Condition) DeleteBuilder[T] {
 	return b
 }
 
+func (b DeleteBuilder[T]) Returning(fields ...any) DeleteReturningBuilder[T] {
+	if len(fields) == 0 {
+		return DeleteReturningBuilder[T]{
+			builder:   b,
+			numFields: 0,
+		}
+	}
+	if len(fields) == 1 {
+		return DeleteReturningBuilder[T]{
+			builder:   b,
+			field0:    fields[0],
+			numFields: 1,
+		}
+	}
+	return DeleteReturningBuilder[T]{
+		builder:   b,
+		fields:    fields,
+		numFields: 2,
+	}
+}
+
 func (b DeleteBuilder[T]) Run(ctx context.Context, cache bool) error {
 	if ctx == nil {
 		ctx = context.Background()

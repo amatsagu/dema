@@ -17,24 +17,28 @@ var (
 )
 
 type colInfo struct {
-	typ            reflect.Type
-	name           string
-	fieldName      string
-	equalSQL       string
-	equalLimit1SQL string
-	countSQL       string
-	deleteSQL      string
-	index          []int
-	offset         uintptr
-	colIdx         int
-	kind           reflect.Kind
-	elemKind       reflect.Kind
-	isPK           bool
-	isOmitZero     bool
-	isPtr          bool
-	isRuneSlice    bool
-	isEncoder      bool
-	isDecoder      bool
+	typ                    reflect.Type
+	name                   string
+	fieldName              string
+	equalSQL               string
+	equalLimit1SQL         string
+	countSQL               string
+	deleteSQL              string
+	deleteReturningAllSQL  string
+	deleteReturningSelfSQL string
+	quotedName             string
+	singleColMap           []*colInfo
+	index                  []int
+	offset                 uintptr
+	colIdx                 int
+	kind                   reflect.Kind
+	elemKind               reflect.Kind
+	isPK                   bool
+	isOmitZero             bool
+	isPtr                  bool
+	isRuneSlice            bool
+	isEncoder              bool
+	isDecoder              bool
 }
 
 func getModelType[T any]() (reflect.Type, bool) {
@@ -45,38 +49,42 @@ func getModelType[T any]() (reflect.Type, bool) {
 	return typ, false
 }
 
-
 type sqlPlan struct {
 	sql  string
 	cols []*colInfo
 }
 
 type tableInfo struct {
-	typ               reflect.Type
-	colByName         map[string]*colInfo
-	insertPlans       atomic.Pointer[map[uint64]*sqlPlan]
-	upsertPlans       atomic.Pointer[map[uint64]*sqlPlan]
-	updateRowPlans    atomic.Pointer[map[uint64]*sqlPlan]
-	selectCache       atomic.Pointer[map[string]string]
-	updateSQLCache    atomic.Pointer[map[string]string]
-	fastUpdatePlans   atomic.Pointer[map[uint32]string]
-	onInsert          func(any) error
-	onUpdate          func(any) error
-	onDelete          func(any) error
-	name              string
-	defaultSelectSQL  string
-	defaultCountSQL   string
-	defaultInsertSQL  string
-	defaultUpsertSQL  string
-	defaultUpdateSQL  string
-	allCols           []*colInfo
-	pkCols            []*colInfo
-	nonPkCols         []*colInfo
-	defaultInsertCols []*colInfo
-	defaultUpsertCols []*colInfo
-	defaultUpdateCols []*colInfo
-	cacheMu           sync.Mutex
-	selectMu          sync.Mutex
+	typ                       reflect.Type
+	colByName                 map[string]*colInfo
+	insertPlans               atomic.Pointer[map[uint64]*sqlPlan]
+	insertReturningPlans      atomic.Pointer[map[uint64]*sqlPlan]
+	upsertPlans               atomic.Pointer[map[uint64]*sqlPlan]
+	updateRowPlans            atomic.Pointer[map[uint64]*sqlPlan]
+	selectCache               atomic.Pointer[map[string]string]
+	updateSQLCache            atomic.Pointer[map[string]string]
+	fastUpdatePlans           atomic.Pointer[map[uint32]string]
+	fastUpdateReturningPlans  atomic.Pointer[map[uint32]string]
+	fastDeleteReturningPlans  atomic.Pointer[map[uint32]string]
+	onInsert                  func(any) error
+	onUpdate                  func(any) error
+	onDelete                  func(any) error
+	name                      string
+	defaultSelectSQL          string
+	defaultCountSQL           string
+	returningAllColsSQL       string
+	defaultInsertSQL          string
+	defaultInsertReturningSQL string
+	defaultUpsertSQL          string
+	defaultUpdateSQL          string
+	allCols                   []*colInfo
+	pkCols                    []*colInfo
+	nonPkCols                 []*colInfo
+	defaultInsertCols         []*colInfo
+	defaultUpsertCols         []*colInfo
+	defaultUpdateCols         []*colInfo
+	cacheMu                   sync.Mutex
+	selectMu                  sync.Mutex
 }
 
 func parseTag(tag string, defaultName string) (name string, isPK bool, isOmitZero bool, ignore bool) {
@@ -215,19 +223,25 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 	}
 
 	var sb strings.Builder
+	var retSb strings.Builder
 	sb.WriteString("SELECT ")
 	for i, col := range cols {
 		if i > 0 {
 			sb.WriteString(", ")
+			retSb.WriteString(", ")
 		}
 		sb.WriteString(`"`)
 		sb.WriteString(col.name)
 		sb.WriteString(`"`)
+		retSb.WriteString(`"`)
+		retSb.WriteString(col.name)
+		retSb.WriteString(`"`)
 	}
 	sb.WriteString(` FROM "`)
 	sb.WriteString(tableName)
 	sb.WriteString(`"`)
 	info.defaultSelectSQL = sb.String()
+	info.returningAllColsSQL = retSb.String()
 	info.defaultCountSQL = `SELECT COUNT(*) FROM "` + tableName + `";`
 
 	for _, col := range cols {
@@ -235,10 +249,15 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 		col.equalLimit1SQL = info.defaultSelectSQL + ` WHERE "` + col.name + `" = ? LIMIT 1`
 		col.countSQL = `SELECT COUNT("` + col.name + `") FROM "` + tableName + `";`
 		col.deleteSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ?;`
+		col.deleteReturningAllSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ? RETURNING ` + info.returningAllColsSQL + `;`
+		col.deleteReturningSelfSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ? RETURNING "` + col.name + `";`
+		col.quotedName = `"` + col.name + `"`
+		col.singleColMap = []*colInfo{col}
 	}
 
 	allMask := (uint64(1) << len(cols)) - 1
 	info.defaultInsertSQL, info.defaultInsertCols = info.getInsertPlan(allMask)
+	info.defaultInsertReturningSQL, _ = info.getInsertReturningPlan(allMask)
 
 	if len(info.pkCols) > 0 {
 		info.defaultUpsertSQL, info.defaultUpsertCols = info.getUpsertPlan(allMask)
@@ -253,6 +272,7 @@ func newTableInfo[T any](tableName string, onInsert, onUpdate, onDelete func(*T)
 	}
 	if omitMask != allMask {
 		info.getInsertPlan(omitMask)
+		info.getInsertReturningPlan(omitMask)
 		if len(info.pkCols) > 0 {
 			info.getUpsertPlan(omitMask)
 			info.getUpdateRowPlan(omitMask)
@@ -316,11 +336,28 @@ func getAdHocTableInfo(typ reflect.Type) (*tableInfo, error) {
 		colByName:       make(map[string]*colInfo, len(cols)),
 		defaultCountSQL: `SELECT COUNT(*) FROM "` + tableName + `";`,
 	}
-	for _, col := range cols {
+	var retSb strings.Builder
+	for i, col := range cols {
+		if i > 0 {
+			retSb.WriteString(", ")
+		}
+		retSb.WriteString(`"`)
+		retSb.WriteString(col.name)
+		retSb.WriteString(`"`)
 		info.colByName[col.name] = col
 		col.countSQL = `SELECT COUNT("` + col.name + `") FROM "` + tableName + `";`
 		col.deleteSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ?;`
+		col.quotedName = `"` + col.name + `"`
+		col.singleColMap = []*colInfo{col}
 	}
+	info.returningAllColsSQL = retSb.String()
+	for _, col := range cols {
+		col.deleteReturningAllSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ? RETURNING ` + info.returningAllColsSQL + `;`
+		col.deleteReturningSelfSQL = `DELETE FROM "` + tableName + `" WHERE "` + col.name + `" = ? RETURNING "` + col.name + `";`
+	}
+	allMask := (uint64(1) << len(cols)) - 1
+	info.defaultInsertSQL, info.defaultInsertCols = info.getInsertPlan(allMask)
+	info.defaultInsertReturningSQL, _ = info.getInsertReturningPlan(allMask)
 	adHocTableCache.Store(typ, info)
 	return info, nil
 }
@@ -471,6 +508,81 @@ func (t *tableInfo) buildInsertPlanSlow(mask uint64) (string, []*colInfo) {
 	}
 	newMap[mask] = plan
 	t.insertPlans.Store(&newMap)
+	return sql, activeCols
+}
+
+func (t *tableInfo) getInsertReturningPlan(mask uint64) (string, []*colInfo) {
+	allMask := (uint64(1) << len(t.allCols)) - 1
+	if mask == allMask && t.defaultInsertReturningSQL != "" {
+		return t.defaultInsertReturningSQL, t.defaultInsertCols
+	}
+
+	if p := t.insertReturningPlans.Load(); p != nil {
+		if plan, ok := (*p)[mask]; ok {
+			return plan.sql, plan.cols
+		}
+	}
+
+	return t.buildInsertReturningPlanSlow(mask)
+}
+
+//go:noinline
+func (t *tableInfo) buildInsertReturningPlanSlow(mask uint64) (string, []*colInfo) {
+	t.cacheMu.Lock()
+	defer t.cacheMu.Unlock()
+	p := t.insertReturningPlans.Load()
+	var current map[uint64]*sqlPlan
+	if p != nil {
+		current = *p
+		if plan, ok := current[mask]; ok {
+			return plan.sql, plan.cols
+		}
+	}
+
+	var activeCols []*colInfo
+	for i, col := range t.allCols {
+		if (mask & (uint64(1) << i)) != 0 {
+			activeCols = append(activeCols, col)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`INSERT INTO "`)
+	sb.WriteString(t.name)
+	if len(activeCols) == 0 {
+		sb.WriteString(`" DEFAULT VALUES RETURNING `)
+		sb.WriteString(t.returningAllColsSQL)
+		sb.WriteString(`;`)
+	} else {
+		sb.WriteString(`" (`)
+		for i, col := range activeCols {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(`"`)
+			sb.WriteString(col.name)
+			sb.WriteString(`"`)
+		}
+		sb.WriteString(") VALUES (")
+		for i := range activeCols {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("?")
+		}
+		sb.WriteString(") RETURNING ")
+		sb.WriteString(t.returningAllColsSQL)
+		sb.WriteString(";")
+	}
+
+	sql := sb.String()
+	plan := &sqlPlan{sql: sql, cols: activeCols}
+	newMap := make(map[uint64]*sqlPlan, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[mask] = plan
+	t.insertReturningPlans.Store(&newMap)
 	return sql, activeCols
 }
 
@@ -790,6 +902,109 @@ func (t *tableInfo) buildFastUpdateEqualSlow(key uint32, col0Name, col1Name, eqC
 	return sql
 }
 
+func (t *tableInfo) getFastUpdateReturningEqualSQL(numSets uint8, col0Name, col1Name, eqColName string) string {
+	c0, ok0 := t.colByName[col0Name]
+	if !ok0 {
+		return ""
+	}
+	cEq, okEq := t.colByName[eqColName]
+	if !okEq {
+		return ""
+	}
+	var key uint32
+	if numSets == 1 {
+		key = uint32(c0.colIdx) | (uint32(cEq.colIdx) << 16) | (1 << 24)
+	} else if numSets == 2 {
+		c1, ok1 := t.colByName[col1Name]
+		if !ok1 {
+			return ""
+		}
+		key = uint32(c0.colIdx) | (uint32(c1.colIdx) << 8) | (uint32(cEq.colIdx) << 16) | (2 << 24)
+	} else {
+		return ""
+	}
+
+	if p := t.fastUpdateReturningPlans.Load(); p != nil {
+		if sql, ok := (*p)[key]; ok {
+			return sql
+		}
+	}
+
+	return t.buildFastUpdateReturningEqualSlow(key, col0Name, col1Name, eqColName, numSets)
+}
+
+//go:noinline
+func (t *tableInfo) buildFastUpdateReturningEqualSlow(key uint32, col0Name, col1Name, eqColName string, numSets uint8) string {
+	t.cacheMu.Lock()
+	defer t.cacheMu.Unlock()
+	p := t.fastUpdateReturningPlans.Load()
+	var current map[uint32]string
+	if p != nil {
+		current = *p
+	}
+	if sql, ok := current[key]; ok {
+		return sql
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`UPDATE "`)
+	sb.WriteString(t.name)
+	sb.WriteString(`" SET "`)
+	sb.WriteString(col0Name)
+	sb.WriteString(`" = ?`)
+	if numSets == 2 {
+		sb.WriteString(`, "`)
+		sb.WriteString(col1Name)
+		sb.WriteString(`" = ?`)
+	}
+	sb.WriteString(` WHERE "`)
+	sb.WriteString(eqColName)
+	sb.WriteString(`" = ? RETURNING `)
+	sb.WriteString(t.returningAllColsSQL)
+	sb.WriteString(`;`)
+
+	sql := sb.String()
+	newMap := make(map[uint32]string, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[key] = sql
+	t.fastUpdateReturningPlans.Store(&newMap)
+	return sql
+}
+
+func (t *tableInfo) getFastDeleteReturningSQL(whereCol, retCol *colInfo) string {
+	key := uint32(whereCol.colIdx) | (uint32(retCol.colIdx) << 16)
+	if p := t.fastDeleteReturningPlans.Load(); p != nil {
+		if sql, ok := (*p)[key]; ok {
+			return sql
+		}
+	}
+	return t.buildFastDeleteReturningSlow(key, whereCol.name, retCol.name)
+}
+
+//go:noinline
+func (t *tableInfo) buildFastDeleteReturningSlow(key uint32, whereColName, retColName string) string {
+	t.cacheMu.Lock()
+	defer t.cacheMu.Unlock()
+	p := t.fastDeleteReturningPlans.Load()
+	var current map[uint32]string
+	if p != nil {
+		current = *p
+	}
+	if sql, ok := current[key]; ok {
+		return sql
+	}
+	sql := `DELETE FROM "` + t.name + `" WHERE "` + whereColName + `" = ? RETURNING "` + retColName + `";`
+	newMap := make(map[uint32]string, len(current)+1)
+	for k, v := range current {
+		newMap[k] = v
+	}
+	newMap[key] = sql
+	t.fastDeleteReturningPlans.Store(&newMap)
+	return sql
+}
+
 func (col *colInfo) extractValue(base unsafe.Pointer) (any, bool, error) {
 	fieldPtr := unsafe.Add(base, col.offset)
 
@@ -836,8 +1051,6 @@ func (col *colInfo) extractValue(base unsafe.Pointer) (any, bool, error) {
 			return reflect.NewAt(col.typ, fieldPtr).Elem().Interface(), true, nil
 		}
 	}
-
-
 
 	if col.isEncoder {
 		enc := reflect.NewAt(col.typ, fieldPtr).Interface().(FieldEncoder)

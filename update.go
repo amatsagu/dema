@@ -75,6 +75,27 @@ func (b UpdateBuilder[T]) Row(row T) UpdateBuilder[T] {
 	return b
 }
 
+func (b UpdateBuilder[T]) Returning(fields ...any) UpdateReturningBuilder[T] {
+	if len(fields) == 0 {
+		return UpdateReturningBuilder[T]{
+			builder:   b,
+			numFields: 0,
+		}
+	}
+	if len(fields) == 1 {
+		return UpdateReturningBuilder[T]{
+			builder:   b,
+			field0:    fields[0],
+			numFields: 1,
+		}
+	}
+	return UpdateReturningBuilder[T]{
+		builder:   b,
+		fields:    fields,
+		numFields: 2,
+	}
+}
+
 func (b UpdateBuilder[T]) Run(ctx context.Context, cache bool) error {
 	if ctx == nil {
 		ctx = context.Background()

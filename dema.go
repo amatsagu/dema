@@ -166,5 +166,3 @@ func (db *DB) getTableInfo(typ reflect.Type) (*tableInfo, error) {
 		Include("dema_operation", "LOOKUP").
 		Include("dema_expected", "registered table")
 }
-
-

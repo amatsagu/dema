@@ -13,9 +13,9 @@ type Condition interface {
 }
 
 var (
-	boxedTrue  any = true
-	boxedFalse any = false
-	boxedInt64s = func() [256]any {
+	boxedTrue   any = true
+	boxedFalse  any = false
+	boxedInt64s     = func() [256]any {
 		var a [256]any
 		for i := range a {
 			a[i] = int64(i)
@@ -159,7 +159,7 @@ type equalCond[V any] struct {
 	col string
 }
 
-func (c equalCond[V]) isCondition()   { _ = c.col }
+func (c equalCond[V]) isCondition()     { _ = c.col }
 func (c equalCond[V]) equalCol() string { return c.col }
 func (c equalCond[V]) equalArg() any {
 	switch val := any(c.val).(type) {
